@@ -418,12 +418,12 @@ impl SavedLayout {
 mod tests {
   use std::{fs, path::PathBuf};
 
-  use super::{
-    SavedLayout, SavedLayouts, SavedLayoutsFile, SavedMonitor,
-    STORE_VERSION,
-  };
-  // Only used by tests exercising `SavedMonitor`'s identity fields,
-  // which are Windows-only.
+  // `SavedLayout` and `SavedMonitor` are only named by tests
+  // exercising `SavedMonitor`'s identity fields, which are
+  // Windows-only.
+  #[cfg(target_os = "windows")]
+  use super::{SavedLayout, SavedMonitor};
+  use super::{SavedLayouts, SavedLayoutsFile, STORE_VERSION};
   #[cfg(target_os = "windows")]
   use crate::models::Monitor;
 
