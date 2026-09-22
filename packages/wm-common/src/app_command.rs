@@ -258,6 +258,7 @@ pub enum InvokeCommand {
   },
   WmExit,
   WmRedraw,
+  WmReloadConfig,
   WmRestoreWorkspaceLayout {
     #[clap(long)]
     name: Option<String>,
@@ -266,7 +267,6 @@ pub enum InvokeCommand {
     #[clap(long)]
     name: String,
   },
-  WmReloadConfig,
   WmTogglePause,
 }
 

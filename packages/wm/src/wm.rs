@@ -776,13 +776,13 @@ impl WindowManager {
 
         Ok(())
       }
+      InvokeCommand::WmReloadConfig => reload_config(state, config),
       InvokeCommand::WmRestoreWorkspaceLayout { name } => {
         restore_workspace_layout(name.as_deref(), state, config)
       }
       InvokeCommand::WmSaveWorkspaceLayout { name } => {
         save_workspace_layout(name, state)
       }
-      InvokeCommand::WmReloadConfig => reload_config(state, config),
       InvokeCommand::WmTogglePause => {
         toggle_pause(state);
         Ok(())
