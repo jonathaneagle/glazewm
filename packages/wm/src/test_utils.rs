@@ -60,6 +60,8 @@ impl Monitor {
     #[builder(default = MOCK_SCALE_FACTOR)] scale_factor: f32,
     #[builder(default = Display::mock())] native: Display,
     #[builder(default = vec![])] workspaces: Vec<Workspace>,
+    #[cfg(target_os = "windows")] hardware_id: Option<String>,
+    #[cfg(target_os = "windows")] device_path: Option<String>,
   ) -> Self {
     let properties = NativeMonitorProperties::mock()
       .device_name(device_name)
@@ -67,6 +69,8 @@ impl Monitor {
       .working_area(working_area)
       .dpi(dpi)
       .scale_factor(scale_factor)
+      .maybe_hardware_id(hardware_id)
+      .maybe_device_path(device_path)
       .call();
 
     let monitor = Self::new(native, properties);
@@ -89,6 +93,8 @@ impl NativeMonitorProperties {
     #[builder(default = mock_working_area())] working_area: Rect,
     #[builder(default = MOCK_DPI)] dpi: u32,
     #[builder(default = MOCK_SCALE_FACTOR)] scale_factor: f32,
+    #[cfg(target_os = "windows")] hardware_id: Option<String>,
+    #[cfg(target_os = "windows")] device_path: Option<String>,
   ) -> Self {
     Self {
       device_name,
@@ -101,9 +107,9 @@ impl NativeMonitorProperties {
       #[cfg(target_os = "windows")]
       handle: 0,
       #[cfg(target_os = "windows")]
-      hardware_id: None,
+      hardware_id,
       #[cfg(target_os = "windows")]
-      device_path: None,
+      device_path,
     }
   }
 }
@@ -256,5 +262,26 @@ impl Workspace {
     }
 
     workspace
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use crate::models::Monitor;
+
+  #[test]
+  fn mock_monitor_carries_identity() {
+    let monitor = Monitor::mock()
+      .hardware_id("DELA26B".to_string())
+      .device_path("\\\\?\\DISPLAY#DELA26B#UID1".to_string())
+      .call();
+
+    let properties = monitor.native_properties();
+
+    assert_eq!(properties.hardware_id.as_deref(), Some("DELA26B"));
+    assert_eq!(
+      properties.device_path.as_deref(),
+      Some("\\\\?\\DISPLAY#DELA26B#UID1")
+    );
   }
 }
