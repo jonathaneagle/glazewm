@@ -276,8 +276,13 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+  // Windows-only: `Monitor::mock()`'s `hardware_id` and `device_path`
+  // builder params, and the `NativeMonitorProperties` fields they set,
+  // are Windows-only.
+  #[cfg(target_os = "windows")]
   use crate::models::Monitor;
 
+  #[cfg(target_os = "windows")]
   #[test]
   fn mock_monitor_carries_identity() {
     let monitor = Monitor::mock()
