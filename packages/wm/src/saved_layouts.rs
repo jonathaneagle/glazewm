@@ -9,11 +9,11 @@
 // allow is removed.
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::Monitor;
+use crate::{models::Monitor, traits::CommonGetters};
 
 /// Current schema version of the layout store.
 ///
@@ -262,20 +262,48 @@ impl SavedLayouts {
   /// live monitor is left over. Automatic restore requires this, so that
   /// an unfamiliar display set never triggers a half-applied layout.
   ///
+  /// If more than one layout matches, the one that sorts first by name
+  /// is chosen, and the ambiguity is logged, so the choice is
+  /// deterministic and diagnosable rather than dependent on hash order.
+  ///
   /// Returns the layout's name alongside the layout.
   #[must_use]
   pub fn exact_match(
     &self,
     live: &[Monitor],
   ) -> Option<(String, &SavedLayout)> {
-    self.file.layouts.iter().find_map(|(name, layout)| {
-      let resolved = layout.resolve(live);
+    let mut candidates = self
+      .file
+      .layouts
+      .iter()
+      .filter(|(_, layout)| {
+        let resolved = layout.resolve(live);
 
-      let is_exact = resolved.len() == layout.monitors.len()
-        && resolved.len() == live.len();
+        resolved.len() == layout.monitors.len()
+          && resolved.len() == live.len()
+      })
+      .collect::<Vec<_>>();
 
-      is_exact.then(|| (name.clone(), layout))
-    })
+    candidates.sort_unstable_by_key(|(name, _)| name.as_str());
+
+    if candidates.len() > 1 {
+      let names = candidates
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+
+      tracing::warn!(
+        "Multiple saved layouts match the current display set: {}. \
+         Choosing '{}'.",
+        names.join(", "),
+        names[0]
+      );
+    }
+
+    candidates
+      .into_iter()
+      .next()
+      .map(|(name, layout)| (name.clone(), layout))
   }
 }
 
@@ -303,6 +331,10 @@ impl SavedMonitor {
 
     #[cfg(target_os = "macos")]
     {
+      // `live` and `saved` are only needed to disambiguate hardware IDs,
+      // which is a Windows-only concern.
+      let _ = (live, saved);
+
       return self
         .device_uuid
         .as_deref()
@@ -351,20 +383,32 @@ impl SavedLayout {
   /// Pairs each saved monitor with the live monitor it identifies.
   ///
   /// Saved monitors that identify no live monitor are omitted, so the
-  /// result may be shorter than `self.monitors`.
+  /// result may be shorter than `self.monitors`. Each live monitor is
+  /// claimed by at most one saved entry, in `self.monitors` order, so
+  /// two saved entries that both identify the same live monitor (e.g.
+  /// a duplicated entry in a hand-edited store) never both resolve to
+  /// it.
   #[must_use]
   pub fn resolve(
     &self,
     live: &[Monitor],
   ) -> Vec<(&SavedMonitor, Monitor)> {
+    let mut claimed = HashSet::new();
+
     self
       .monitors
       .iter()
       .filter_map(|saved| {
         live
           .iter()
-          .find(|monitor| saved.matches(monitor, live, &self.monitors))
-          .map(|monitor| (saved, monitor.clone()))
+          .find(|monitor| {
+            !claimed.contains(&monitor.id())
+              && saved.matches(monitor, live, &self.monitors)
+          })
+          .map(|monitor| {
+            claimed.insert(monitor.id());
+            (saved, monitor.clone())
+          })
       })
       .collect()
   }
@@ -378,6 +422,9 @@ mod tests {
     SavedLayout, SavedLayouts, SavedLayoutsFile, SavedMonitor,
     STORE_VERSION,
   };
+  // Only used by tests exercising `SavedMonitor`'s identity fields,
+  // which are Windows-only.
+  #[cfg(target_os = "windows")]
   use crate::models::Monitor;
 
   /// Creates an empty unique directory for a test to write into.
@@ -390,6 +437,9 @@ mod tests {
   }
 
   /// Builds a representative store for round-trip testing.
+  ///
+  /// Windows-only: `SavedMonitor`'s identity fields are Windows-only.
+  #[cfg(target_os = "windows")]
   fn sample_file() -> SavedLayoutsFile {
     let mut file = SavedLayoutsFile::default();
 
@@ -415,6 +465,7 @@ mod tests {
     file
   }
 
+  #[cfg(target_os = "windows")]
   #[test]
   fn file_round_trips_through_yaml() {
     let original = sample_file();
@@ -456,6 +507,9 @@ mod tests {
     assert!(!store.is_readonly());
   }
 
+  // Windows-only: constructs `SavedMonitor` literals with the
+  // Windows-only identity fields.
+  #[cfg(target_os = "windows")]
   #[test]
   fn saved_store_reloads_identically() {
     let path = temp_dir("roundtrip").join("layouts.yaml");
@@ -522,6 +576,7 @@ mod tests {
   }
 
   /// Builds a live monitor with the given identity.
+  #[cfg(target_os = "windows")]
   fn live_monitor(
     hardware_id: Option<&str>,
     device_path: Option<&str>,
@@ -533,6 +588,7 @@ mod tests {
   }
 
   /// Builds a saved monitor entry with the given identity.
+  #[cfg(target_os = "windows")]
   fn saved_monitor(
     hardware_id: Option<&str>,
     device_path: Option<&str>,
@@ -544,6 +600,7 @@ mod tests {
     }
   }
 
+  #[cfg(target_os = "windows")]
   #[test]
   fn matches_on_device_path() {
     let live = vec![live_monitor(Some("DELA26B"), Some("PATH-A"))];
@@ -553,6 +610,7 @@ mod tests {
     assert!(saved[0].matches(&live[0], &live, &saved));
   }
 
+  #[cfg(target_os = "windows")]
   #[test]
   fn matches_on_unique_hardware_id_when_path_differs() {
     let live = vec![live_monitor(Some("DELA26B"), Some("NEW-DOCK"))];
@@ -561,6 +619,7 @@ mod tests {
     assert!(saved[0].matches(&live[0], &live, &saved));
   }
 
+  #[cfg(target_os = "windows")]
   #[test]
   fn does_not_match_ambiguous_hardware_id() {
     // Two identical displays, and device paths that no longer line up.
@@ -577,6 +636,61 @@ mod tests {
     assert!(!saved[1].matches(&live[1], &live, &saved));
   }
 
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn does_not_match_ambiguous_saved_hardware_id() {
+    // A single, unambiguous live display, but two saved entries share
+    // its hardware id and neither's device path lines up. A guard
+    // that only checked the live side would wrongly match here.
+    let live = vec![live_monitor(Some("SAME"), Some("NEW-1"))];
+    let saved = vec![
+      saved_monitor(Some("SAME"), Some("OLD-1")),
+      saved_monitor(Some("SAME"), Some("OLD-2")),
+    ];
+
+    assert!(!saved[0].matches(&live[0], &live, &saved));
+    assert!(!saved[1].matches(&live[0], &live, &saved));
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn resolve_claims_each_live_monitor_at_most_once() {
+    let live = vec![
+      live_monitor(Some("A"), Some("PATH-A")),
+      live_monitor(Some("B"), Some("PATH-B")),
+    ];
+
+    // Two saved entries identifying the same live monitor, as a
+    // hand-edited layouts.yaml could produce. Neither identifies the
+    // second live monitor.
+    let layout = SavedLayout {
+      saved_at: None,
+      monitors: vec![
+        saved_monitor(Some("A"), Some("PATH-A")),
+        saved_monitor(Some("A"), Some("PATH-A")),
+      ],
+    };
+
+    let resolved = layout.resolve(&live);
+    assert_eq!(
+      resolved.len(),
+      1,
+      "Only one saved entry should claim the live monitor; the other \
+       has nothing left to resolve to."
+    );
+
+    let mut store =
+      SavedLayouts::load(temp_dir("dedup").join("layouts.yaml"));
+    store.upsert("dup", layout);
+
+    assert!(
+      store.exact_match(&live).is_none(),
+      "The second live monitor is never claimed, so this must not be \
+       reported as an exact match."
+    );
+  }
+
+  #[cfg(target_os = "windows")]
   #[test]
   fn exact_match_requires_every_monitor_present() {
     let mut store =
