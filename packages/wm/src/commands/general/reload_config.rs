@@ -27,6 +27,11 @@ pub fn reload_config(
   // Re-evaluate user config file and set its values in state.
   config.reload()?;
 
+  // Re-read the saved workspace layouts. `layouts.yaml` is hand-editable
+  // and has no list or delete commands of its own, so reloading the
+  // config is the gesture for picking those edits up.
+  state.saved_layouts.reload();
+
   // Re-run window rules on all active windows.
   for window in state.windows() {
     window.set_done_window_rules(Vec::new());

@@ -5,8 +5,15 @@
 //! `docs/superpowers/specs/2026-09-22-workspace-layout-profiles-design.
 //! md`.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+  collections::{HashMap, HashSet},
+  fs::{self, File},
+  io::Write,
+  path::{Path, PathBuf},
+  time::{SystemTime, UNIX_EPOCH},
+};
 
+use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 
 use crate::{models::Monitor, traits::CommonGetters};
@@ -47,6 +54,81 @@ pub struct SavedMonitor {
   pub workspaces: Vec<String>,
 }
 
+impl SavedMonitor {
+  /// Whether this saved entry identifies the given live monitor.
+  ///
+  /// Matching mirrors `find_matching_monitor` in the display settings
+  /// handler, in priority order:
+  ///
+  /// 1. Device path equality, which is exact but changes between docks.
+  /// 2. Hardware ID equality, but only when that ID is unambiguous on both
+  ///    sides. Two identical displays share a hardware ID, so matching on
+  ///    it would be a coin flip.
+  ///
+  /// A saved entry that carries no identity never matches anything, and a
+  /// live monitor whose identity could not be read is never claimed.
+  ///
+  /// `live` and `saved` are the full sets being matched, and are needed
+  /// only to establish whether a hardware ID is unambiguous.
+  #[must_use]
+  pub fn matches(
+    &self,
+    monitor: &Monitor,
+    live: &[Monitor],
+    saved: &[SavedMonitor],
+  ) -> bool {
+    let properties = monitor.native_properties();
+
+    #[cfg(target_os = "macos")]
+    {
+      // `live` and `saved` are only needed to disambiguate hardware IDs,
+      // which is a Windows-only concern.
+      let _ = (live, saved);
+
+      self
+        .device_uuid
+        .as_deref()
+        .is_some_and(|uuid| uuid == properties.device_uuid)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+      let path_matches = self
+        .device_path
+        .as_deref()
+        .zip(properties.device_path.as_deref())
+        .is_some_and(|(saved_path, live_path)| saved_path == live_path);
+
+      if path_matches {
+        return true;
+      }
+
+      let Some(hardware_id) = self.hardware_id.as_deref() else {
+        return false;
+      };
+
+      if properties.hardware_id.as_deref() != Some(hardware_id) {
+        return false;
+      }
+
+      let live_count = live
+        .iter()
+        .filter(|other| {
+          other.native_properties().hardware_id.as_deref()
+            == Some(hardware_id)
+        })
+        .count();
+
+      let saved_count = saved
+        .iter()
+        .filter(|other| other.hardware_id.as_deref() == Some(hardware_id))
+        .count();
+
+      live_count == 1 && saved_count == 1
+    }
+  }
+}
+
 /// A named arrangement of workspaces across a set of monitors.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
@@ -59,6 +141,41 @@ pub struct SavedLayout {
 
   /// Monitors in this layout, in no meaningful order.
   pub monitors: Vec<SavedMonitor>,
+}
+
+impl SavedLayout {
+  /// Pairs each saved monitor with the live monitor it identifies.
+  ///
+  /// Saved monitors that identify no live monitor are omitted, so the
+  /// result may be shorter than `self.monitors`. Each live monitor is
+  /// claimed by at most one saved entry, in `self.monitors` order, so
+  /// two saved entries that both identify the same live monitor (e.g.
+  /// a duplicated entry in a hand-edited store) never both resolve to
+  /// it.
+  #[must_use]
+  pub fn resolve(
+    &self,
+    live: &[Monitor],
+  ) -> Vec<(&SavedMonitor, Monitor)> {
+    let mut claimed = HashSet::new();
+
+    self
+      .monitors
+      .iter()
+      .filter_map(|saved| {
+        live
+          .iter()
+          .find(|monitor| {
+            !claimed.contains(&monitor.id())
+              && saved.matches(monitor, live, &self.monitors)
+          })
+          .map(|monitor| {
+            claimed.insert(monitor.id());
+            (saved, monitor.clone())
+          })
+      })
+      .collect()
+  }
 }
 
 /// On-disk representation of the layout store.
@@ -80,14 +197,6 @@ impl Default for SavedLayoutsFile {
     }
   }
 }
-
-use std::{
-  fs,
-  path::{Path, PathBuf},
-  time::{SystemTime, UNIX_EPOCH},
-};
-
-use anyhow::{bail, Context};
 
 /// Runtime handle to the layout store.
 #[derive(Clone, Debug)]
@@ -151,6 +260,19 @@ impl SavedLayouts {
     }
   }
 
+  /// Re-reads the store from its path, discarding the in-memory copy.
+  ///
+  /// Hand editing `layouts.yaml` is the sanctioned way to list and delete
+  /// layouts, so the store has to be refreshed before it is written back.
+  /// Otherwise an edit made while the WM is running is invisible to
+  /// restore and is overwritten by the next save.
+  ///
+  /// Carries the same semantics as `load`, so a store whose schema
+  /// version is newer than this build's stays read-only.
+  pub fn reload(&mut self) {
+    *self = Self::load(self.path.clone());
+  }
+
   /// Renames a corrupt store aside so it is never silently overwritten.
   fn back_up_corrupt(path: &Path) {
     let timestamp = Self::now_epoch_secs();
@@ -212,6 +334,18 @@ impl SavedLayouts {
     self.file.layouts.insert(name.to_string(), layout);
   }
 
+  /// Returns a copy of the store with `layout` inserted under `name`.
+  ///
+  /// Lets a write be attempted before the live store is mutated, so a
+  /// failed save cannot leave a layout in memory that is not on disk.
+  #[must_use]
+  pub fn with_upserted(&self, name: &str, layout: SavedLayout) -> Self {
+    let mut candidate = self.clone();
+
+    candidate.upsert(name, layout);
+    candidate
+  }
+
   /// Writes the store to disk.
   ///
   /// Writes to a temporary file and renames it into place, so an
@@ -241,9 +375,25 @@ impl SavedLayouts {
 
     let temp_path = self.path.with_extension("yaml.tmp");
 
-    fs::write(&temp_path, serialized).with_context(|| {
-      format!("Unable to write to {}.", temp_path.display())
-    })?;
+    // Flush the temporary file before renaming it. A rename of a file
+    // whose contents are still buffered survives a process crash, but a
+    // power loss can leave the renamed file as garbage, which the next
+    // load would move aside as corrupt.
+    {
+      let mut temp_file = File::create(&temp_path).with_context(|| {
+        format!("Unable to create {}.", temp_path.display())
+      })?;
+
+      temp_file
+        .write_all(serialized.as_bytes())
+        .with_context(|| {
+          format!("Unable to write to {}.", temp_path.display())
+        })?;
+
+      temp_file.sync_all().with_context(|| {
+        format!("Unable to flush {}.", temp_path.display())
+      })?;
+    }
 
     fs::rename(&temp_path, &self.path).with_context(|| {
       format!("Unable to replace {}.", self.path.display())
@@ -300,113 +450,6 @@ impl SavedLayouts {
       .into_iter()
       .next()
       .map(|(name, layout)| (name.clone(), layout))
-  }
-}
-
-impl SavedMonitor {
-  /// Whether this saved entry identifies the given live monitor.
-  ///
-  /// Matching mirrors `find_matching_monitor` in the display settings
-  /// handler, in priority order:
-  ///
-  /// 1. Device path equality, which is exact but changes between docks.
-  /// 2. Hardware ID equality, but only when that ID is unambiguous on both
-  ///    sides. Two identical displays share a hardware ID, so matching on
-  ///    it would be a coin flip.
-  ///
-  /// `live` and `saved` are the full sets being matched, and are needed
-  /// only to establish whether a hardware ID is unambiguous.
-  #[must_use]
-  pub fn matches(
-    &self,
-    monitor: &Monitor,
-    live: &[Monitor],
-    saved: &[SavedMonitor],
-  ) -> bool {
-    let properties = monitor.native_properties();
-
-    #[cfg(target_os = "macos")]
-    {
-      // `live` and `saved` are only needed to disambiguate hardware IDs,
-      // which is a Windows-only concern.
-      let _ = (live, saved);
-
-      return self
-        .device_uuid
-        .as_deref()
-        .is_some_and(|uuid| uuid == properties.device_uuid);
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-      let path_matches = self
-        .device_path
-        .as_deref()
-        .zip(properties.device_path.as_deref())
-        .is_some_and(|(saved_path, live_path)| saved_path == live_path);
-
-      if path_matches {
-        return true;
-      }
-
-      let Some(hardware_id) = self.hardware_id.as_deref() else {
-        return false;
-      };
-
-      if properties.hardware_id.as_deref() != Some(hardware_id) {
-        return false;
-      }
-
-      let live_count = live
-        .iter()
-        .filter(|other| {
-          other.native_properties().hardware_id.as_deref()
-            == Some(hardware_id)
-        })
-        .count();
-
-      let saved_count = saved
-        .iter()
-        .filter(|other| other.hardware_id.as_deref() == Some(hardware_id))
-        .count();
-
-      live_count == 1 && saved_count == 1
-    }
-  }
-}
-
-impl SavedLayout {
-  /// Pairs each saved monitor with the live monitor it identifies.
-  ///
-  /// Saved monitors that identify no live monitor are omitted, so the
-  /// result may be shorter than `self.monitors`. Each live monitor is
-  /// claimed by at most one saved entry, in `self.monitors` order, so
-  /// two saved entries that both identify the same live monitor (e.g.
-  /// a duplicated entry in a hand-edited store) never both resolve to
-  /// it.
-  #[must_use]
-  pub fn resolve(
-    &self,
-    live: &[Monitor],
-  ) -> Vec<(&SavedMonitor, Monitor)> {
-    let mut claimed = HashSet::new();
-
-    self
-      .monitors
-      .iter()
-      .filter_map(|saved| {
-        live
-          .iter()
-          .find(|monitor| {
-            !claimed.contains(&monitor.id())
-              && saved.matches(monitor, live, &self.monitors)
-          })
-          .map(|monitor| {
-            claimed.insert(monitor.id());
-            (saved, monitor.clone())
-          })
-      })
-      .collect()
   }
 }
 
@@ -534,6 +577,24 @@ mod tests {
   }
 
   #[test]
+  fn save_leaves_no_temporary_file_behind() {
+    let dir = temp_dir("atomic");
+    let store = SavedLayouts::load(dir.join("layouts.yaml"));
+
+    store.save().expect("Failed to save store.");
+
+    let leftovers = fs::read_dir(&dir)
+      .expect("Failed to read temp dir.")
+      .filter_map(Result::ok)
+      .filter(|entry| {
+        entry.file_name().to_string_lossy().ends_with(".tmp")
+      })
+      .count();
+
+    assert_eq!(leftovers, 0, "The temp file must be renamed into place.");
+  }
+
+  #[test]
   fn corrupt_file_is_backed_up_and_store_is_empty() {
     let dir = temp_dir("corrupt");
     let path = dir.join("layouts.yaml");
@@ -569,6 +630,66 @@ mod tests {
     assert!(store.is_readonly());
     assert_eq!(store.names(), Vec::<String>::new());
     assert!(store.save().is_err(), "Save must be refused.");
+  }
+
+  #[test]
+  fn reload_picks_up_external_edits() {
+    let path = temp_dir("reload").join("layouts.yaml");
+    let mut store = SavedLayouts::load(path.clone());
+
+    assert_eq!(store.names(), Vec::<String>::new());
+
+    fs::write(&path, "version: 1\nlayouts:\n  home:\n    monitors: []\n")
+      .expect("Failed to write store.");
+
+    store.reload();
+
+    assert_eq!(store.names(), vec!["home".to_string()]);
+  }
+
+  #[test]
+  fn reload_drops_layouts_deleted_on_disk() {
+    let path = temp_dir("reload-delete").join("layouts.yaml");
+    let mut store = SavedLayouts::load(path.clone());
+
+    store.upsert("office", super::SavedLayout::default());
+    store.save().expect("Failed to save store.");
+
+    // Stands in for the user deleting a layout by hand.
+    fs::write(&path, "version: 1\nlayouts: {}\n")
+      .expect("Failed to write store.");
+
+    store.reload();
+
+    assert_eq!(store.names(), Vec::<String>::new());
+  }
+
+  #[test]
+  fn reload_preserves_readonly_for_future_version() {
+    let path = temp_dir("reload-future").join("layouts.yaml");
+
+    fs::write(&path, "version: 999\nlayouts: {}\n")
+      .expect("Failed to write future-version file.");
+
+    let mut store = SavedLayouts::load(path);
+    assert!(store.is_readonly());
+
+    store.reload();
+
+    assert!(store.is_readonly(), "Reload must keep refusing writes.");
+    assert!(store.save().is_err(), "Save must still be refused.");
+  }
+
+  #[test]
+  fn with_upserted_leaves_the_original_untouched() {
+    let store =
+      SavedLayouts::load(temp_dir("candidate").join("layouts.yaml"));
+
+    let candidate =
+      store.with_upserted("office", super::SavedLayout::default());
+
+    assert_eq!(store.names(), Vec::<String>::new());
+    assert_eq!(candidate.names(), vec!["office".to_string()]);
   }
 
   /// Builds a live monitor with the given identity.
@@ -646,6 +767,52 @@ mod tests {
 
     assert!(!saved[0].matches(&live[0], &live, &saved));
     assert!(!saved[1].matches(&live[0], &live, &saved));
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn saved_entry_without_identity_never_matches() {
+    // A hand-edited entry with no identity fields must not latch onto
+    // an arbitrary display.
+    let live = vec![live_monitor(Some("A"), Some("PATH-A"))];
+    let saved = vec![saved_monitor(None, None)];
+
+    assert!(!saved[0].matches(&live[0], &live, &saved));
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn unidentifiable_live_monitor_is_never_claimed() {
+    // A virtual display, VM adapter, or panel whose device path could
+    // not be read.
+    let live = vec![live_monitor(None, None)];
+
+    let identified = vec![saved_monitor(Some("A"), Some("PATH-A"))];
+    assert!(!identified[0].matches(&live[0], &live, &identified));
+
+    // Two unknowns must not match each other either.
+    let anonymous = vec![saved_monitor(None, None)];
+    assert!(!anonymous[0].matches(&live[0], &live, &anonymous));
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn exact_match_never_fires_for_unidentifiable_displays() {
+    let mut store =
+      SavedLayouts::load(temp_dir("anonymous").join("layouts.yaml"));
+
+    store.upsert(
+      "anonymous",
+      SavedLayout {
+        saved_at: None,
+        monitors: vec![saved_monitor(None, None)],
+      },
+    );
+
+    assert!(
+      store.exact_match(&[live_monitor(None, None)]).is_none(),
+      "An unidentifiable display set must never trigger a restore."
+    );
   }
 
   #[cfg(target_os = "windows")]

@@ -124,8 +124,9 @@ async fn start_wm(
   // Parse and validate user config.
   let mut config = UserConfig::new(config_path)?;
 
-  // Load saved workspace layouts. A failure here is non-fatal; the store
-  // degrades to empty.
+  // Load saved workspace layouts. A missing, corrupt or future-version
+  // store degrades to empty rather than failing, but an unresolvable
+  // home directory is fatal, as it is for the user config.
   let saved_layouts = SavedLayouts::load(SavedLayouts::default_path()?);
 
   // Add application icon to system tray.

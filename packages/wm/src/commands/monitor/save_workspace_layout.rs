@@ -5,6 +5,9 @@ use crate::{
 };
 
 /// Builds a layout describing which workspaces sit on which monitors.
+///
+/// Leaves `saved_at` as `None`; `SavedLayouts::upsert` stamps it when the
+/// layout enters the store.
 #[must_use]
 pub fn capture_layout(monitors: &[Monitor]) -> SavedLayout {
   let saved_monitors = monitors
@@ -38,6 +41,12 @@ pub fn capture_layout(monitors: &[Monitor]) -> SavedLayout {
 
 /// Captures the current workspace layout and saves it under `name`.
 ///
+/// The store is re-read first, so that layouts added, edited or deleted
+/// in `layouts.yaml` since the WM started are not overwritten. The write
+/// is attempted before the in-memory store is replaced, so a failed save
+/// never leaves a layout that `wm-restore-workspace-layout` can find but
+/// that is absent from disk.
+///
 /// # Errors
 ///
 /// Returns an error if the layout store cannot be written to disk.
@@ -45,10 +54,14 @@ pub fn save_workspace_layout(
   name: &str,
   state: &mut WmState,
 ) -> anyhow::Result<()> {
-  let layout = capture_layout(&state.monitors());
+  state.saved_layouts.reload();
 
-  state.saved_layouts.upsert(name, layout);
-  state.saved_layouts.save()?;
+  let layout = capture_layout(&state.monitors());
+  let candidate = state.saved_layouts.with_upserted(name, layout);
+
+  candidate.save()?;
+
+  state.saved_layouts = candidate;
 
   tracing::info!("Saved workspace layout '{name}'.");
 
@@ -57,6 +70,9 @@ pub fn save_workspace_layout(
 
 #[cfg(test)]
 mod tests {
+  // Windows-only: these tests assert on `SavedMonitor`'s `hardware_id`
+  // field and use `Monitor::mock()`'s `hardware_id` builder param, both
+  // of which are Windows-only.
   #[cfg(target_os = "windows")]
   use super::capture_layout;
   #[cfg(target_os = "windows")]
