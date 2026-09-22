@@ -62,16 +62,24 @@ impl Monitor {
     #[builder(default = vec![])] workspaces: Vec<Workspace>,
     #[cfg(target_os = "windows")] hardware_id: Option<String>,
     #[cfg(target_os = "windows")] device_path: Option<String>,
+    #[cfg(target_os = "macos")] device_uuid: Option<String>,
   ) -> Self {
     let properties = NativeMonitorProperties::mock()
       .device_name(device_name)
       .bounds(bounds)
       .working_area(working_area)
       .dpi(dpi)
-      .scale_factor(scale_factor)
+      .scale_factor(scale_factor);
+
+    #[cfg(target_os = "windows")]
+    let properties = properties
       .maybe_hardware_id(hardware_id)
-      .maybe_device_path(device_path)
-      .call();
+      .maybe_device_path(device_path);
+
+    #[cfg(target_os = "macos")]
+    let properties = properties.maybe_device_uuid(device_uuid);
+
+    let properties = properties.call();
 
     let monitor = Self::new(native, properties);
 
@@ -95,6 +103,7 @@ impl NativeMonitorProperties {
     #[builder(default = MOCK_SCALE_FACTOR)] scale_factor: f32,
     #[cfg(target_os = "windows")] hardware_id: Option<String>,
     #[cfg(target_os = "windows")] device_path: Option<String>,
+    #[cfg(target_os = "macos")] device_uuid: Option<String>,
   ) -> Self {
     Self {
       device_name,
@@ -103,7 +112,7 @@ impl NativeMonitorProperties {
       dpi,
       scale_factor,
       #[cfg(target_os = "macos")]
-      device_uuid: String::new(),
+      device_uuid: device_uuid.unwrap_or_default(),
       #[cfg(target_os = "windows")]
       handle: 0,
       #[cfg(target_os = "windows")]
