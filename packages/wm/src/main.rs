@@ -30,8 +30,8 @@ use wm_platform::{
 };
 
 use crate::{
-  ipc_server::IpcServer, sys_tray::SystemTray, user_config::UserConfig,
-  wm::WindowManager,
+  ipc_server::IpcServer, saved_layouts::SavedLayouts,
+  sys_tray::SystemTray, user_config::UserConfig, wm::WindowManager,
 };
 
 mod commands;
@@ -124,10 +124,15 @@ async fn start_wm(
   // Parse and validate user config.
   let mut config = UserConfig::new(config_path)?;
 
+  // Load saved workspace layouts. A failure here is non-fatal; the store
+  // degrades to empty.
+  let saved_layouts = SavedLayouts::load(SavedLayouts::default_path()?);
+
   // Add application icon to system tray.
   let mut tray = SystemTray::new(&config.path, dispatcher.clone())?;
 
-  let mut wm = WindowManager::new(&mut config, dispatcher.clone())?;
+  let mut wm =
+    WindowManager::new(&mut config, dispatcher.clone(), saved_layouts)?;
 
   let mut ipc_server = IpcServer::start().await?;
 

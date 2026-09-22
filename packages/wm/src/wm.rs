@@ -24,7 +24,9 @@ use crate::{
       cycle_focus, disable_binding_mode, enable_binding_mode,
       platform_sync, reload_config, shell_exec, toggle_pause,
     },
-    monitor::focus_monitor,
+    monitor::{
+      focus_monitor, restore_workspace_layout, save_workspace_layout,
+    },
     window::{
       ignore_window, move_window_in_direction, move_window_to_workspace,
       resize_window, set_window_position, set_window_size,
@@ -44,6 +46,7 @@ use crate::{
   },
   ipc_server::IpcServer,
   models::{Container, WorkspaceTarget},
+  saved_layouts::SavedLayouts,
   traits::{CommonGetters, WindowGetters},
   user_config::UserConfig,
   wm_state::WmState,
@@ -59,11 +62,13 @@ impl WindowManager {
   pub fn new(
     config: &mut UserConfig,
     dispatcher: Dispatcher,
+    saved_layouts: SavedLayouts,
   ) -> anyhow::Result<Self> {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (exit_tx, exit_rx) = mpsc::unbounded_channel();
 
-    let mut state = WmState::new(dispatcher, event_tx, exit_tx);
+    let mut state =
+      WmState::new(dispatcher, event_tx, exit_tx, saved_layouts);
     state.populate(config)?;
 
     Ok(Self {
@@ -770,6 +775,12 @@ impl WindowManager {
           .queue_container_to_redraw(state.root_container.clone());
 
         Ok(())
+      }
+      InvokeCommand::WmRestoreWorkspaceLayout { name } => {
+        restore_workspace_layout(name.as_deref(), state, config)
+      }
+      InvokeCommand::WmSaveWorkspaceLayout { name } => {
+        save_workspace_layout(name, state)
       }
       InvokeCommand::WmReloadConfig => reload_config(state, config),
       InvokeCommand::WmTogglePause => {

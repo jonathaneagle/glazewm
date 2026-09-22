@@ -1,10 +1,7 @@
-// Temporary: `capture_layout` is only consumed by tests until Task 8
-// wires it into `save_workspace_layout`, when this allow is removed.
-#![allow(dead_code)]
-
 use crate::{
   models::Monitor,
   saved_layouts::{SavedLayout, SavedMonitor},
+  wm_state::WmState,
 };
 
 /// Builds a layout describing which workspaces sit on which monitors.
@@ -37,6 +34,25 @@ pub fn capture_layout(monitors: &[Monitor]) -> SavedLayout {
     saved_at: None,
     monitors: saved_monitors,
   }
+}
+
+/// Captures the current workspace layout and saves it under `name`.
+///
+/// # Errors
+///
+/// Returns an error if the layout store cannot be written to disk.
+pub fn save_workspace_layout(
+  name: &str,
+  state: &mut WmState,
+) -> anyhow::Result<()> {
+  let layout = capture_layout(&state.monitors());
+
+  state.saved_layouts.upsert(name, layout);
+  state.saved_layouts.save()?;
+
+  tracing::info!("Saved workspace layout '{name}'.");
+
+  Ok(())
 }
 
 #[cfg(test)]

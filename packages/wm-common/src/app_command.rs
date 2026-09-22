@@ -258,6 +258,14 @@ pub enum InvokeCommand {
   },
   WmExit,
   WmRedraw,
+  WmRestoreWorkspaceLayout {
+    #[clap(long)]
+    name: Option<String>,
+  },
+  WmSaveWorkspaceLayout {
+    #[clap(long)]
+    name: String,
+  },
   WmReloadConfig,
   WmTogglePause,
 }
@@ -431,4 +439,46 @@ pub struct InvokeUpdateWorkspaceConfig {
 
   #[clap(long)]
   pub keep_alive: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+  use clap::Parser;
+
+  use super::InvokeCommand;
+
+  /// Parses a command string the way the user config does.
+  fn parse(input: &str) -> InvokeCommand {
+    let args = std::iter::once("").chain(input.split_whitespace());
+
+    InvokeCommand::try_parse_from(args).expect("Failed to parse command.")
+  }
+
+  #[test]
+  fn parses_save_workspace_layout() {
+    assert_eq!(
+      parse("wm-save-workspace-layout --name office"),
+      InvokeCommand::WmSaveWorkspaceLayout {
+        name: "office".to_string()
+      }
+    );
+  }
+
+  #[test]
+  fn parses_restore_workspace_layout_with_name() {
+    assert_eq!(
+      parse("wm-restore-workspace-layout --name home"),
+      InvokeCommand::WmRestoreWorkspaceLayout {
+        name: Some("home".to_string())
+      }
+    );
+  }
+
+  #[test]
+  fn parses_restore_workspace_layout_without_name() {
+    assert_eq!(
+      parse("wm-restore-workspace-layout"),
+      InvokeCommand::WmRestoreWorkspaceLayout { name: None }
+    );
+  }
 }

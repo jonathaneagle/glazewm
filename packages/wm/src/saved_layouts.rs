@@ -5,10 +5,6 @@
 //! `docs/superpowers/specs/2026-09-22-workspace-layout-profiles-design.
 //! md`.
 
-// Temporary: these types are consumed from Task 8 onward, when this
-// allow is removed.
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};

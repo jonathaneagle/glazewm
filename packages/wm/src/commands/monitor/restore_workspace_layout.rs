@@ -1,8 +1,4 @@
-// Temporary: these functions have no caller outside their own test
-// module until Task 8 adds the `restore_workspace_layout` wrapper here
-// and wires it up. Re-exporting or otherwise using them earlier would
-// fail the unused-imports/dead-code lints under `-D warnings`.
-#![allow(dead_code)]
+use anyhow::bail;
 
 use crate::{
   commands::monitor::move_workspace_to_monitor,
@@ -65,6 +61,58 @@ pub fn apply_layout(
   }
 
   Ok(count)
+}
+
+/// Restores a saved workspace layout, by name or by matching monitors.
+///
+/// When `name` is given, that layout is applied, erroring if no layout
+/// with that name is saved. When `name` is `None`, the layout whose
+/// monitors exactly match the current display set is applied, if any.
+///
+/// # Errors
+///
+/// Returns an error if a named layout is not found, or if applying the
+/// layout fails.
+pub fn restore_workspace_layout(
+  name: Option<&str>,
+  state: &mut WmState,
+  config: &UserConfig,
+) -> anyhow::Result<()> {
+  let resolved = if let Some(name) = name {
+    let Some(layout) = state.saved_layouts.get(name) else {
+      if state.saved_layouts.is_readonly() {
+        bail!(
+          "Layout store is read-only because it was saved by a newer \
+           version of GlazeWM. No layouts are available."
+        );
+      }
+
+      let available = state.saved_layouts.names().join(", ");
+
+      bail!(
+        "No saved workspace layout named '{name}'. Available \
+         layouts: {available}."
+      );
+    };
+
+    layout.clone()
+  } else {
+    let Some((_, layout)) =
+      state.saved_layouts.exact_match(&state.monitors())
+    else {
+      return Ok(());
+    };
+
+    layout.clone()
+  };
+
+  let count = apply_layout(&resolved, state, config)?;
+
+  tracing::info!(
+    "Restored workspace layout, moving {count} workspace(s)."
+  );
+
+  Ok(())
 }
 
 #[cfg(test)]

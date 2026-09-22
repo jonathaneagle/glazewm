@@ -23,6 +23,7 @@ use crate::{
     WindowContainer, Workspace, WorkspaceTarget,
   },
   pending_sync::PendingSync,
+  saved_layouts::SavedLayouts,
   traits::{CommonGetters, PositionGetters, WindowGetters},
   user_config::UserConfig,
 };
@@ -35,6 +36,9 @@ pub struct WmState {
   pub dispatcher: Dispatcher,
 
   pub pending_sync: PendingSync,
+
+  /// Saved workspace layouts, keyed by user-chosen name.
+  pub saved_layouts: SavedLayouts,
 
   /// Name of the most recently focused workspace.
   ///
@@ -82,11 +86,13 @@ impl WmState {
     dispatcher: Dispatcher,
     event_tx: mpsc::UnboundedSender<WmEvent>,
     exit_tx: mpsc::UnboundedSender<()>,
+    saved_layouts: SavedLayouts,
   ) -> Self {
     Self {
       root_container: RootContainer::new(),
       dispatcher,
       pending_sync: PendingSync::default(),
+      saved_layouts,
       prev_effects_window: None,
       recent_workspace_name: None,
       unmanaged_or_minimized_timestamp: None,
