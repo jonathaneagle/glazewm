@@ -63,7 +63,7 @@ its formatting.
 version: 1
 layouts:
   office:
-    saved_at: 1758550800
+    saved_at: 1790086800
     monitors:
       - hardware_id: DELA26B
         device_path: '\\?\DISPLAY#DELA26B#4&353f47b2&0&UID12613#{e6f07b5f-...}'
@@ -105,8 +105,11 @@ Types mirror the platform split already used by `NativeMonitorProperties`
 dependency.
 
 The loaded store lives on `WmState` next to other runtime state such as
-`binding_modes`. It is loaded once during `start_wm`; a load failure is
-non-fatal and yields an empty store.
+`binding_modes`. It is loaded during `start_wm` and re-read before every save
+and on `wm-reload-config`, so that hand edits are picked up rather than
+overwritten. A load failure is non-fatal and yields an empty store; a re-read
+that fails to parse keeps the layouts already in memory, since at that point
+they are the only good copy left.
 
 ### Monitor identity matching
 

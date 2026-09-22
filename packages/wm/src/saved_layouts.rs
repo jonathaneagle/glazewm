@@ -198,6 +198,22 @@ impl Default for SavedLayoutsFile {
   }
 }
 
+/// What reading the layout store from disk produced.
+///
+/// Distinguishes a missing file from an unparseable one, so that a
+/// reload can keep the layouts it already holds when the file on disk
+/// has been corrupted.
+enum StoreRead {
+  /// No readable file at the path.
+  Missing,
+
+  /// A file that is not valid YAML, or does not match the schema.
+  Corrupt(serde_yaml::Error),
+
+  /// A successfully parsed store, whose version is not yet checked.
+  Parsed(SavedLayoutsFile),
+}
+
 /// Runtime handle to the layout store.
 #[derive(Clone, Debug)]
 pub struct SavedLayouts {
@@ -213,25 +229,46 @@ pub struct SavedLayouts {
 }
 
 impl SavedLayouts {
-  /// Loads the layout store from the given path.
+  /// Reads and parses the store at `path`.
   ///
-  /// Never fails. A missing file yields an empty store, a corrupt file is
-  /// renamed aside and yields an empty store, and a store with a newer
-  /// schema version yields an empty read-only store.
-  #[must_use]
-  pub fn load(path: PathBuf) -> Self {
+  /// Never fails. The three outcomes are kept distinct so that `load` and
+  /// `reload` can respond to a corrupt file differently.
+  fn read(path: &Path) -> StoreRead {
+    let Ok(contents) = fs::read_to_string(path) else {
+      return StoreRead::Missing;
+    };
+
+    match serde_yaml::from_str::<SavedLayoutsFile>(&contents) {
+      Ok(file) => StoreRead::Parsed(file),
+      Err(err) => StoreRead::Corrupt(err),
+    }
+  }
+
+  /// Builds a store handle from the result of reading `path`.
+  ///
+  /// A corrupt file is renamed aside, since there is no in-memory copy to
+  /// fall back on at this point.
+  fn from_read(read: StoreRead, path: PathBuf) -> Self {
     let empty = Self {
       file: SavedLayoutsFile::default(),
       path,
       is_readonly: false,
     };
 
-    let Ok(contents) = fs::read_to_string(&empty.path) else {
-      return empty;
-    };
+    match read {
+      StoreRead::Missing => empty,
+      StoreRead::Corrupt(err) => {
+        tracing::error!(
+          "Failed to parse layout store at {}: {}. Backing it up and \
+           starting empty.",
+          empty.path.display(),
+          err
+        );
 
-    match serde_yaml::from_str::<SavedLayoutsFile>(&contents) {
-      Ok(file) if file.version > STORE_VERSION => {
+        Self::back_up_corrupt(&empty.path);
+        empty
+      }
+      StoreRead::Parsed(file) if file.version > STORE_VERSION => {
         tracing::error!(
           "Layout store at {} has version {}, which is newer than the \
            supported version {}. Layouts will not be loaded or saved.",
@@ -245,32 +282,49 @@ impl SavedLayouts {
           ..empty
         }
       }
-      Ok(file) => Self { file, ..empty },
-      Err(err) => {
-        tracing::error!(
-          "Failed to parse layout store at {}: {}. Backing it up and \
-           starting empty.",
-          empty.path.display(),
-          err
-        );
-
-        Self::back_up_corrupt(&empty.path);
-        empty
-      }
+      StoreRead::Parsed(file) => Self { file, ..empty },
     }
   }
 
-  /// Re-reads the store from its path, discarding the in-memory copy.
+  /// Loads the layout store from the given path.
+  ///
+  /// Never fails. A missing file yields an empty store, a corrupt file is
+  /// renamed aside and yields an empty store, and a store with a newer
+  /// schema version yields an empty read-only store.
+  #[must_use]
+  pub fn load(path: PathBuf) -> Self {
+    Self::from_read(Self::read(&path), path)
+  }
+
+  /// Re-reads the store from its path.
   ///
   /// Hand editing `layouts.yaml` is the sanctioned way to list and delete
   /// layouts, so the store has to be refreshed before it is written back.
   /// Otherwise an edit made while the WM is running is invisible to
   /// restore and is overwritten by the next save.
   ///
-  /// Carries the same semantics as `load`, so a store whose schema
-  /// version is newer than this build's stays read-only.
+  /// Differs from `load` on exactly one outcome. A corrupt file is still
+  /// backed up and logged, but the layouts already in memory are kept,
+  /// because after startup they are the only good copy left and the next
+  /// save writes them back. `load` cannot do this: at startup there is
+  /// nothing in memory to keep. A deleted file still empties the store,
+  /// since deleting `layouts.yaml` is how every layout is removed at
+  /// once, and a store whose schema version is newer than this build's
+  /// still stays read-only.
   pub fn reload(&mut self) {
-    *self = Self::load(self.path.clone());
+    match Self::read(&self.path) {
+      StoreRead::Corrupt(err) => {
+        tracing::error!(
+          "Failed to parse layout store at {}: {}. Backing it up and \
+           keeping the layouts already in memory.",
+          self.path.display(),
+          err
+        );
+
+        Self::back_up_corrupt(&self.path);
+      }
+      read => *self = Self::from_read(read, self.path.clone()),
+    }
   }
 
   /// Renames a corrupt store aside so it is never silently overwritten.
@@ -662,6 +716,47 @@ mod tests {
     store.reload();
 
     assert_eq!(store.names(), Vec::<String>::new());
+  }
+
+  #[test]
+  fn reload_keeps_layouts_when_the_file_is_corrupt() {
+    let dir = temp_dir("reload-corrupt");
+    let path = dir.join("layouts.yaml");
+
+    let mut store = SavedLayouts::load(path.clone());
+    store.upsert("office", super::SavedLayout::default());
+    store.save().expect("Failed to save store.");
+
+    // Stands in for a bad hand-edit, or a write truncated by power loss.
+    fs::write(&path, "this: is: not: valid: yaml:\n  - [")
+      .expect("Failed to write corrupt file.");
+
+    store.reload();
+
+    assert_eq!(
+      store.names(),
+      vec!["office".to_string()],
+      "After startup the in-memory layouts are the only good copy \
+       left, so a corrupt file must not discard them."
+    );
+
+    let backups = fs::read_dir(&dir)
+      .expect("Failed to read temp dir.")
+      .filter_map(Result::ok)
+      .filter(|entry| {
+        entry.file_name().to_string_lossy().contains(".corrupt-")
+      })
+      .count();
+
+    assert_eq!(backups, 1, "The corrupt file must still be backed up.");
+
+    // The session self-heals: the next save rewrites the store.
+    store.save().expect("Failed to save store.");
+
+    assert_eq!(
+      SavedLayouts::load(path).names(),
+      vec!["office".to_string()]
+    );
   }
 
   #[test]
