@@ -5,8 +5,8 @@
 //! `docs/superpowers/specs/2026-09-22-workspace-layout-profiles-design.
 //! md`.
 
-// Nothing outside this module constructs these types yet; file IO lands
-// in a later task and will consume them.
+// Temporary: these types are consumed from Task 8 onward, when this
+// allow is removed.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -134,8 +134,6 @@ mod tests {
   }
 
   #[test]
-  // Emptiness, not a specific value, is what this test cares about.
-  #[allow(clippy::assert_is_empty)]
   fn missing_optional_fields_default() {
     let yaml = "version: 1\nlayouts:\n  home:\n    monitors: []\n";
 
@@ -146,6 +144,6 @@ mod tests {
       parsed.layouts.get("home").expect("Missing 'home' layout.");
 
     assert_eq!(layout.saved_at, None);
-    assert!(layout.monitors.is_empty());
+    assert_eq!(layout.monitors, vec![]);
   }
 }
