@@ -13,6 +13,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::models::Monitor;
+
 /// Current schema version of the layout store.
 ///
 /// A store with a higher version is loaded as empty and never written to,
@@ -253,6 +255,119 @@ impl SavedLayouts {
 
     Ok(())
   }
+
+  /// Finds the layout whose monitors exactly match the live display set.
+  ///
+  /// Exact means every saved monitor resolves to a live monitor, and no
+  /// live monitor is left over. Automatic restore requires this, so that
+  /// an unfamiliar display set never triggers a half-applied layout.
+  ///
+  /// Returns the layout's name alongside the layout.
+  #[must_use]
+  pub fn exact_match(
+    &self,
+    live: &[Monitor],
+  ) -> Option<(String, &SavedLayout)> {
+    self.file.layouts.iter().find_map(|(name, layout)| {
+      let resolved = layout.resolve(live);
+
+      let is_exact = resolved.len() == layout.monitors.len()
+        && resolved.len() == live.len();
+
+      is_exact.then(|| (name.clone(), layout))
+    })
+  }
+}
+
+impl SavedMonitor {
+  /// Whether this saved entry identifies the given live monitor.
+  ///
+  /// Matching mirrors `find_matching_monitor` in the display settings
+  /// handler, in priority order:
+  ///
+  /// 1. Device path equality, which is exact but changes between docks.
+  /// 2. Hardware ID equality, but only when that ID is unambiguous on both
+  ///    sides. Two identical displays share a hardware ID, so matching on
+  ///    it would be a coin flip.
+  ///
+  /// `live` and `saved` are the full sets being matched, and are needed
+  /// only to establish whether a hardware ID is unambiguous.
+  #[must_use]
+  pub fn matches(
+    &self,
+    monitor: &Monitor,
+    live: &[Monitor],
+    saved: &[SavedMonitor],
+  ) -> bool {
+    let properties = monitor.native_properties();
+
+    #[cfg(target_os = "macos")]
+    {
+      return self
+        .device_uuid
+        .as_deref()
+        .is_some_and(|uuid| uuid == properties.device_uuid);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+      let path_matches = self
+        .device_path
+        .as_deref()
+        .zip(properties.device_path.as_deref())
+        .is_some_and(|(saved_path, live_path)| saved_path == live_path);
+
+      if path_matches {
+        return true;
+      }
+
+      let Some(hardware_id) = self.hardware_id.as_deref() else {
+        return false;
+      };
+
+      if properties.hardware_id.as_deref() != Some(hardware_id) {
+        return false;
+      }
+
+      let live_count = live
+        .iter()
+        .filter(|other| {
+          other.native_properties().hardware_id.as_deref()
+            == Some(hardware_id)
+        })
+        .count();
+
+      let saved_count = saved
+        .iter()
+        .filter(|other| other.hardware_id.as_deref() == Some(hardware_id))
+        .count();
+
+      live_count == 1 && saved_count == 1
+    }
+  }
+}
+
+impl SavedLayout {
+  /// Pairs each saved monitor with the live monitor it identifies.
+  ///
+  /// Saved monitors that identify no live monitor are omitted, so the
+  /// result may be shorter than `self.monitors`.
+  #[must_use]
+  pub fn resolve(
+    &self,
+    live: &[Monitor],
+  ) -> Vec<(&SavedMonitor, Monitor)> {
+    self
+      .monitors
+      .iter()
+      .filter_map(|saved| {
+        live
+          .iter()
+          .find(|monitor| saved.matches(monitor, live, &self.monitors))
+          .map(|monitor| (saved, monitor.clone()))
+      })
+      .collect()
+  }
 }
 
 #[cfg(test)]
@@ -263,6 +378,7 @@ mod tests {
     SavedLayout, SavedLayouts, SavedLayoutsFile, SavedMonitor,
     STORE_VERSION,
   };
+  use crate::models::Monitor;
 
   /// Creates an empty unique directory for a test to write into.
   fn temp_dir(label: &str) -> PathBuf {
@@ -403,5 +519,96 @@ mod tests {
     assert!(store.is_readonly());
     assert_eq!(store.names(), Vec::<String>::new());
     assert!(store.save().is_err(), "Save must be refused.");
+  }
+
+  /// Builds a live monitor with the given identity.
+  fn live_monitor(
+    hardware_id: Option<&str>,
+    device_path: Option<&str>,
+  ) -> Monitor {
+    Monitor::mock()
+      .maybe_hardware_id(hardware_id.map(str::to_string))
+      .maybe_device_path(device_path.map(str::to_string))
+      .call()
+  }
+
+  /// Builds a saved monitor entry with the given identity.
+  fn saved_monitor(
+    hardware_id: Option<&str>,
+    device_path: Option<&str>,
+  ) -> SavedMonitor {
+    SavedMonitor {
+      hardware_id: hardware_id.map(str::to_string),
+      device_path: device_path.map(str::to_string),
+      workspaces: vec![],
+    }
+  }
+
+  #[test]
+  fn matches_on_device_path() {
+    let live = vec![live_monitor(Some("DELA26B"), Some("PATH-A"))];
+    // Hardware id differs, so only the device path can match.
+    let saved = vec![saved_monitor(Some("OTHER"), Some("PATH-A"))];
+
+    assert!(saved[0].matches(&live[0], &live, &saved));
+  }
+
+  #[test]
+  fn matches_on_unique_hardware_id_when_path_differs() {
+    let live = vec![live_monitor(Some("DELA26B"), Some("NEW-DOCK"))];
+    let saved = vec![saved_monitor(Some("DELA26B"), Some("OLD-DOCK"))];
+
+    assert!(saved[0].matches(&live[0], &live, &saved));
+  }
+
+  #[test]
+  fn does_not_match_ambiguous_hardware_id() {
+    // Two identical displays, and device paths that no longer line up.
+    let live = vec![
+      live_monitor(Some("SAME"), Some("NEW-1")),
+      live_monitor(Some("SAME"), Some("NEW-2")),
+    ];
+    let saved = vec![
+      saved_monitor(Some("SAME"), Some("OLD-1")),
+      saved_monitor(Some("SAME"), Some("OLD-2")),
+    ];
+
+    assert!(!saved[0].matches(&live[0], &live, &saved));
+    assert!(!saved[1].matches(&live[1], &live, &saved));
+  }
+
+  #[test]
+  fn exact_match_requires_every_monitor_present() {
+    let mut store =
+      SavedLayouts::load(temp_dir("exact").join("layouts.yaml"));
+
+    store.upsert(
+      "office",
+      SavedLayout {
+        saved_at: None,
+        monitors: vec![
+          saved_monitor(Some("A"), Some("PATH-A")),
+          saved_monitor(Some("B"), Some("PATH-B")),
+        ],
+      },
+    );
+
+    let both = vec![
+      live_monitor(Some("A"), Some("PATH-A")),
+      live_monitor(Some("B"), Some("PATH-B")),
+    ];
+    assert!(store.exact_match(&both).is_some());
+
+    // Subset: one display missing.
+    let subset = vec![live_monitor(Some("A"), Some("PATH-A"))];
+    assert!(store.exact_match(&subset).is_none());
+
+    // Superset: an extra display present.
+    let superset = vec![
+      live_monitor(Some("A"), Some("PATH-A")),
+      live_monitor(Some("B"), Some("PATH-B")),
+      live_monitor(Some("C"), Some("PATH-C")),
+    ];
+    assert!(store.exact_match(&superset).is_none());
   }
 }
