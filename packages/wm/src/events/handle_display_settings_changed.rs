@@ -3,8 +3,8 @@ use wm_common::try_warn;
 
 use crate::{
   commands::monitor::{
-    add_monitor, move_bounded_workspaces_to_new_monitor, remove_monitor,
-    sort_monitors, update_monitor,
+    add_monitor, apply_layout, move_bounded_workspaces_to_new_monitor,
+    remove_monitor, sort_monitors, update_monitor,
   },
   models::{Monitor, NativeMonitorProperties},
   traits::{CommonGetters, PositionGetters, WindowGetters},
@@ -61,6 +61,10 @@ pub fn handle_display_settings_changed(
     }
   }
 
+  // Capture whether any monitors were added, before `new_monitors` is
+  // consumed below.
+  let has_added_monitors = !new_monitors.is_empty();
+
   // Remove monitors that no longer have a corresponding display and move
   // their workspaces to other monitors.
   //
@@ -68,9 +72,12 @@ pub fn handle_display_settings_changed(
   // disconnected). This will cause the WM's monitors to temporarily
   // mismatch the OS monitor state, however, it'll be updated correctly
   // when a new monitor is connected again.
+  let mut has_removed_monitors = false;
+
   for monitor in pending_monitors {
     if state.monitors().len() > 1 {
       remove_monitor(monitor, state, config)?;
+      has_removed_monitors = true;
     }
   }
 
@@ -79,6 +86,36 @@ pub fn handle_display_settings_changed(
 
   for new_monitor in new_monitors {
     move_bounded_workspaces_to_new_monitor(&new_monitor, state, config)?;
+  }
+
+  // Restore a saved layout when the set of displays has changed and
+  // exactly matches one. Requiring an exact match also debounces the
+  // burst of events emitted while docking, since no layout can match
+  // until every display has arrived.
+  if config
+    .value
+    .general
+    .workspace_layout
+    .restore_workspace_layout
+    && (has_added_monitors || has_removed_monitors)
+  {
+    let matched = state
+      .saved_layouts
+      .exact_match(&state.monitors())
+      .map(|(name, layout)| (name, layout.clone()));
+
+    if let Some((name, layout)) = matched {
+      match apply_layout(&layout, state, config) {
+        Ok(count) => tracing::info!(
+          "Restored workspace layout '{}', moved {} workspaces.",
+          name,
+          count
+        ),
+        Err(err) => {
+          tracing::error!("Failed to restore workspace layout: {}", err);
+        }
+      }
+    }
   }
 
   for window in state.windows() {

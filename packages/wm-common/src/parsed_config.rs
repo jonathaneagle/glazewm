@@ -96,6 +96,10 @@ pub struct GeneralConfig {
 
   /// Affects which windows get shown in the native Windows taskbar.
   pub show_all_in_taskbar: bool,
+
+  /// Config related to saved workspace layouts.
+  #[serde(flatten)]
+  pub workspace_layout: WorkspaceLayoutConfig,
 }
 
 impl Default for GeneralConfig {
@@ -118,6 +122,24 @@ impl Default for GeneralConfig {
         }
       },
       show_all_in_taskbar: false,
+      workspace_layout: WorkspaceLayoutConfig::default(),
+    }
+  }
+}
+
+/// Config related to saved workspace layouts.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, rename_all(serialize = "camelCase"))]
+pub struct WorkspaceLayoutConfig {
+  /// Whether to automatically restore a saved workspace layout when the
+  /// connected displays exactly match one.
+  pub restore_workspace_layout: bool,
+}
+
+impl Default for WorkspaceLayoutConfig {
+  fn default() -> Self {
+    WorkspaceLayoutConfig {
+      restore_workspace_layout: true,
     }
   }
 }
@@ -470,5 +492,19 @@ where
   #[cfg(not(target_os = "macos"))]
   {
     Ok(method)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::GeneralConfig;
+
+  #[test]
+  fn restore_workspace_layout_defaults_to_true() {
+    assert!(
+      GeneralConfig::default()
+        .workspace_layout
+        .restore_workspace_layout
+    );
   }
 }
