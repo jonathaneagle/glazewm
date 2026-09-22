@@ -42,7 +42,9 @@ general:
 
   # Whether to automatically restore a saved workspace layout when the
   # connected displays exactly match one. Layouts are saved with the
-  # `wm-save-workspace-layout` command.
+  # `wm-save-workspace-layout` command and stored in
+  # `~/.glzr/glazewm/layouts.yaml`, which can be edited by hand to rename
+  # or remove them. Run `wm-reload-config` to pick up such edits.
   restore_workspace_layout: true
 
 gaps:

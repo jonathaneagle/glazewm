@@ -63,7 +63,7 @@ its formatting.
 version: 1
 layouts:
   office:
-    saved_at: 2026-09-22T14:20:00Z
+    saved_at: 1758550800
     monitors:
       - hardware_id: DELA26B
         device_path: '\\?\DISPLAY#DELA26B#4&353f47b2&0&UID12613#{e6f07b5f-...}'
@@ -83,8 +83,10 @@ corrupt store.
 `workspaces` is stored as an ordered list purely because YAML sequences are
 ordered; the order carries no meaning (see non-goals).
 
-`saved_at` is informational only — it exists so a human editing the file can
-tell layouts apart. Nothing reads it, and matching never consults it.
+`saved_at` is Unix epoch seconds, and is informational only — it exists so a
+human editing the file can tell layouts apart. Nothing reads it, and matching
+never consults it. Epoch seconds rather than an ISO-8601 timestamp keeps the
+store free of a date-time dependency, since nothing formats or parses the value.
 
 **Platform scope.** The store and matching are written for both platforms via
 the same `cfg` split the rest of the codebase uses, keyed on `device_uuid` on
