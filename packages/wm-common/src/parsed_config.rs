@@ -69,6 +69,9 @@ impl Default for GapsConfig {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all(serialize = "camelCase"))]
+// Config DTOs legitimately carry many independent booleans; same
+// precedent used in `PendingSync` and `InvokeFocusCommand`.
+#[allow(clippy::struct_excessive_bools)]
 pub struct GeneralConfig {
   /// Config for automatically moving the cursor.
   pub cursor_jump: CursorJumpConfig,
@@ -97,9 +100,9 @@ pub struct GeneralConfig {
   /// Affects which windows get shown in the native Windows taskbar.
   pub show_all_in_taskbar: bool,
 
-  /// Config related to saved workspace layouts.
-  #[serde(flatten)]
-  pub workspace_layout: WorkspaceLayoutConfig,
+  /// Whether to automatically restore a saved workspace layout when the
+  /// connected displays exactly match one.
+  pub restore_workspace_layout: bool,
 }
 
 impl Default for GeneralConfig {
@@ -122,23 +125,6 @@ impl Default for GeneralConfig {
         }
       },
       show_all_in_taskbar: false,
-      workspace_layout: WorkspaceLayoutConfig::default(),
-    }
-  }
-}
-
-/// Config related to saved workspace layouts.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(default, rename_all(serialize = "camelCase"))]
-pub struct WorkspaceLayoutConfig {
-  /// Whether to automatically restore a saved workspace layout when the
-  /// connected displays exactly match one.
-  pub restore_workspace_layout: bool,
-}
-
-impl Default for WorkspaceLayoutConfig {
-  fn default() -> Self {
-    WorkspaceLayoutConfig {
       restore_workspace_layout: true,
     }
   }
@@ -501,10 +487,6 @@ mod tests {
 
   #[test]
   fn restore_workspace_layout_defaults_to_true() {
-    assert!(
-      GeneralConfig::default()
-        .workspace_layout
-        .restore_workspace_layout
-    );
+    assert!(GeneralConfig::default().restore_workspace_layout);
   }
 }

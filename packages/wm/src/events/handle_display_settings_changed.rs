@@ -92,11 +92,7 @@ pub fn handle_display_settings_changed(
   // exactly matches one. Requiring an exact match also debounces the
   // burst of events emitted while docking, since no layout can match
   // until every display has arrived.
-  if config
-    .value
-    .general
-    .workspace_layout
-    .restore_workspace_layout
+  if config.value.general.restore_workspace_layout
     && (has_added_monitors || has_removed_monitors)
   {
     let matched = state
