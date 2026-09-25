@@ -16,6 +16,7 @@
 
 GlazeWM lets you easily organize windows and adjust their layout on the fly by using keyboard-driven commands.
 
+[Fork customisations](#fork-customisations) •
 [Installation](#installation) •
 [Default keybindings](#default-keybindings) •
 [Config documentation](#config-documentation) •
@@ -33,6 +34,80 @@ GlazeWM lets you easily organize windows and adjust their layout on the fly by u
 - Customizable rules for specific windows
 - Easy one-click installation
 - Integration with [Zebar](https://github.com/glzr-io/zebar) as a status bar
+
+## Fork customisations
+
+This fork ([`jonathaneagle/glazewm`](https://github.com/jonathaneagle/glazewm)) adds features on top of upstream [`glzr-io/glazewm`](https://github.com/glzr-io/glazewm). Everything below is specific to the fork and isn't in upstream releases.
+
+### Workspace layout profiles
+
+Saves which workspaces sit on which monitor, and restores that arrangement automatically when the same displays are connected again. This is for moving between setups such as an office dock, a home dock and the laptop on its own.
+
+**Commands:**
+
+```sh
+glazewm command wm-save-workspace-layout --name office   # Save the current arrangement.
+glazewm command wm-restore-workspace-layout --name office # Apply a layout by name.
+glazewm command wm-restore-workspace-layout               # Apply whichever layout matches the connected displays.
+glazewm query workspace-layout                             # The layout matching the connected displays, e.g. {"name":"office"}.
+glazewm sub -e workspace_layout_changed                    # Event fired when that match changes.
+```
+
+**Config:** `general.restore_workspace_layout` (default `true`) turns automatic restore on or off.
+
+**Storage:** layouts are kept in `~/.glzr/glazewm/layouts.yaml`. There are no list or delete commands; edit the file by hand to rename or remove layouts, then run `wm-reload-config`. A file that can't be parsed is backed up as `layouts.yaml.corrupt-<timestamp>` rather than overwritten.
+
+> [!NOTE]
+> The CLI on your `PATH` must be this fork's build. The stock CLI rejects these commands with `unrecognized subcommand`.
+
+#### What a layout contains
+
+A layout records **which workspaces go on which physical monitor**, and nothing else. It doesn't save windows, their positions or sizes, or which apps were open. Windows are carried along because they belong to workspaces.
+
+Monitors are identified by hardware rather than by position:
+
+1. **Device path**: exact, but changes if the same display is attached through a different dock.
+2. **Hardware ID** (the display model, e.g. `DELA26B`): used when the path differs, but only if exactly one connected display and one saved display share that ID. Two identical monitors can't be told apart this way.
+
+#### Which layout is active
+
+The *active* layout is the saved layout whose monitors exactly match the connected displays: every saved monitor is present and no extra display is connected. It's the same layout automatic restore would apply. If several layouts match, the first one alphabetically wins, and a warning is logged when one is restored.
+
+It's re-checked at startup, whenever displays change, after a save and on `wm-reload-config`. `query workspace-layout` returns it, and `workspace_layout_changed` fires only when it actually changes.
+
+#### Example: undock, keep working, redock
+
+Say you've saved `office` while docked and `mobile` on the laptop screen alone.
+
+1. **Undock.** GlazeWM moves the workspaces from the unplugged monitors onto the laptop screen (standard behaviour). The displays now exactly match `mobile`, so it's applied.
+2. **Work on the laptop.** Open and close apps freely. Every window belongs to a workspace, so a new app just joins whichever workspace you opened it in.
+3. **Redock.** Once *every* `office` display is connected, `office` is applied automatically. Displays connecting one at a time don't trigger a partial restore. Each workspace named in `office` that's on the wrong monitor is moved to its saved one, with all its windows.
+
+| While undocked you… | After redocking |
+| --- | --- |
+| Opened an app in workspace 3 | It moves with workspace 3 to workspace 3's office monitor. |
+| Closed an app | It stays closed; nothing is reopened. |
+| Moved an app from workspace 2 to 5 | It stays in 5, and ends up on 5's office monitor. |
+| Closed *every* app in a workspace | Unless it has `keep_alive: true`, that workspace no longer exists, so it's skipped. If you use it again later, it opens on the focused monitor, not necessarily its office monitor. |
+| Used a workspace not named in `office` | It stays where it is. |
+
+The arrangement inside each workspace (splits and tiling directions) moves with it, and sizes adapt to the new monitor.
+
+#### Limitations
+
+- Automatic restore only happens when the set of connected displays changes. Swapping one display for another without changing the count doesn't trigger it. Run `wm-restore-workspace-layout` manually in that case.
+- Restoring by name applies whatever it can: monitors in the layout that aren't connected are skipped, so a named restore on a different setup can be partial.
+
+### Companion: workspace legend (Zebar widget)
+
+A Zebar widget pack, `workspace-legend`, pairs with this fork. It isn't part of this repository: it lives in `~/.glzr/zebar/workspace-legend/` and is enabled in Zebar's `startupConfigs`. Press `alt+0` (the `legend` binding mode in `config.yaml`) to show a 3×3 overview of workspaces 1–9, then press `1`–`9` to jump, or `Esc` or a click outside the card to close.
+
+It shows:
+
+- **Windows per workspace**, with trimmed titles.
+- **Tiling structure**: the workspace direction (`⇆ horizontal` / `⇅ vertical`), windows inside a split indented under that split's direction, `float`/`min`/`max`/`full` badges for non-tiling windows, and the focused window highlighted.
+- **Monitor mapping**: each screen is framed in its own colour with an `M1`/`M2`/`M3` label (numbered left to right), and each tile is tagged with the same colour.
+- **Active layout**: the header shows `layout · <name>`, from `query workspace-layout` and the `workspace_layout_changed` event.
 
 ## Installation
 
