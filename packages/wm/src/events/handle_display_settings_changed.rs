@@ -4,7 +4,8 @@ use wm_common::try_warn;
 use crate::{
   commands::monitor::{
     add_monitor, apply_layout, move_bounded_workspaces_to_new_monitor,
-    remove_monitor, sort_monitors, update_monitor,
+    refresh_active_workspace_layout, remove_monitor, sort_monitors,
+    update_monitor,
   },
   models::{Monitor, NativeMonitorProperties},
   traits::{CommonGetters, PositionGetters, WindowGetters},
@@ -113,6 +114,10 @@ pub fn handle_display_settings_changed(
       }
     }
   }
+
+  // Unconditional, since any display change can gain or lose a match,
+  // and it only emits an event when the active layout actually changes.
+  refresh_active_workspace_layout(state);
 
   for window in state.windows() {
     // Display setting changes can spread windows out sporadically, so mark

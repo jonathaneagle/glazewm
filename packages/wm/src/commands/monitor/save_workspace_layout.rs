@@ -1,4 +1,5 @@
 use crate::{
+  commands::monitor::refresh_active_workspace_layout,
   models::Monitor,
   saved_layouts::{SavedLayout, SavedMonitor},
   wm_state::WmState,
@@ -64,6 +65,8 @@ pub fn save_workspace_layout(
   state.saved_layouts = candidate;
 
   tracing::info!("Saved workspace layout '{name}'.");
+
+  refresh_active_workspace_layout(state);
 
   Ok(())
 }

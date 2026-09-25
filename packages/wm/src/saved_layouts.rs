@@ -472,19 +472,7 @@ impl SavedLayouts {
     &self,
     live: &[Monitor],
   ) -> Option<(String, &SavedLayout)> {
-    let mut candidates = self
-      .file
-      .layouts
-      .iter()
-      .filter(|(_, layout)| {
-        let resolved = layout.resolve(live);
-
-        resolved.len() == layout.monitors.len()
-          && resolved.len() == live.len()
-      })
-      .collect::<Vec<_>>();
-
-    candidates.sort_unstable_by_key(|(name, _)| name.as_str());
+    let candidates = self.exact_matches(live);
 
     if candidates.len() > 1 {
       let names = candidates
@@ -504,6 +492,45 @@ impl SavedLayouts {
       .into_iter()
       .next()
       .map(|(name, layout)| (name.clone(), layout))
+  }
+
+  /// Name of the layout that is active for the live display set.
+  ///
+  /// Active means the layout `exact_match` would restore for these
+  /// displays, so the two can never disagree. Unlike `exact_match`, an
+  /// ambiguous match is not logged, since this is re-evaluated routinely
+  /// rather than in response to a restore.
+  #[must_use]
+  pub fn active_name(&self, live: &[Monitor]) -> Option<String> {
+    self
+      .exact_matches(live)
+      .into_iter()
+      .next()
+      .map(|(name, _)| name.clone())
+  }
+
+  /// All layouts whose monitors exactly match the live display set,
+  /// sorted by name.
+  ///
+  /// See `exact_match` for what counts as an exact match.
+  fn exact_matches(
+    &self,
+    live: &[Monitor],
+  ) -> Vec<(&String, &SavedLayout)> {
+    let mut candidates = self
+      .file
+      .layouts
+      .iter()
+      .filter(|(_, layout)| {
+        let resolved = layout.resolve(live);
+
+        resolved.len() == layout.monitors.len()
+          && resolved.len() == live.len()
+      })
+      .collect::<Vec<_>>();
+
+    candidates.sort_unstable_by_key(|(name, _)| name.as_str());
+    candidates
   }
 }
 
@@ -982,5 +1009,81 @@ mod tests {
       live_monitor(Some("C"), Some("PATH-C")),
     ];
     assert!(store.exact_match(&superset).is_none());
+  }
+
+  /// Builds a layout spanning monitors with the given hardware IDs, each
+  /// identified by a device path derived from its ID.
+  #[cfg(target_os = "windows")]
+  fn layout_of(ids: &[&str]) -> SavedLayout {
+    SavedLayout {
+      saved_at: None,
+      monitors: ids
+        .iter()
+        .map(|id| saved_monitor(Some(*id), Some(&format!("PATH-{id}"))))
+        .collect(),
+    }
+  }
+
+  /// Builds live monitors to match `layout_of`.
+  #[cfg(target_os = "windows")]
+  fn live_of(ids: &[&str]) -> Vec<Monitor> {
+    ids
+      .iter()
+      .map(|id| live_monitor(Some(*id), Some(&format!("PATH-{id}"))))
+      .collect()
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn active_name_follows_the_connected_displays() {
+    let mut store =
+      SavedLayouts::load(temp_dir("active").join("layouts.yaml"));
+
+    store.upsert("home", layout_of(&["A", "B"]));
+    store.upsert("laptop", layout_of(&["A"]));
+
+    assert_eq!(
+      store.active_name(&live_of(&["A", "B"])).as_deref(),
+      Some("home")
+    );
+    assert_eq!(
+      store.active_name(&live_of(&["A"])).as_deref(),
+      Some("laptop")
+    );
+    assert_eq!(
+      store.active_name(&live_of(&["A", "C"])),
+      None,
+      "An unfamiliar display set has no active layout."
+    );
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn active_name_is_none_for_an_empty_store() {
+    let store =
+      SavedLayouts::load(temp_dir("active-empty").join("layouts.yaml"));
+
+    assert_eq!(store.active_name(&live_of(&["A"])), None);
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn active_name_agrees_with_exact_match_when_ambiguous() {
+    let mut store = SavedLayouts::load(
+      temp_dir("active-ambiguous").join("layouts.yaml"),
+    );
+
+    // Inserted out of order, so hash order cannot pass by accident.
+    store.upsert("work", layout_of(&["A", "B"]));
+    store.upsert("desk", layout_of(&["A", "B"]));
+
+    let live = live_of(&["A", "B"]);
+
+    assert_eq!(store.active_name(&live).as_deref(), Some("desk"));
+    assert_eq!(
+      store.exact_match(&live).map(|(name, _)| name).as_deref(),
+      Some("desk"),
+      "Active must be the layout a restore would apply."
+    );
   }
 }

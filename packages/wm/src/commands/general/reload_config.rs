@@ -7,7 +7,10 @@ use wm_common::{WindowRuleEvent, WmEvent};
 use wm_platform::NativeWindowWindowsExt;
 
 use crate::{
-  commands::{window::run_window_rules, workspace::sort_workspaces},
+  commands::{
+    monitor::refresh_active_workspace_layout, window::run_window_rules,
+    workspace::sort_workspaces,
+  },
   traits::{CommonGetters, TilingSizeGetters, WindowGetters},
   user_config::UserConfig,
   wm::WindowManager,
@@ -31,6 +34,7 @@ pub fn reload_config(
   // and has no list or delete commands of its own, so reloading the
   // config is the gesture for picking those edits up.
   state.saved_layouts.reload();
+  refresh_active_workspace_layout(state);
 
   // Re-run window rules on all active windows.
   for window in state.windows() {

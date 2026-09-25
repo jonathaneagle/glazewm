@@ -128,6 +128,9 @@ pub enum QueryCommand {
   Windows,
   /// Outputs all active workspaces.
   Workspaces,
+  /// Outputs the saved workspace layout matching the connected displays,
+  /// if any.
+  WorkspaceLayout,
   /// Outputs whether the window manager is paused.
   Paused,
 }
@@ -150,6 +153,7 @@ pub enum SubscribableEvent {
   WorkspaceActivated,
   WorkspaceDeactivated,
   WorkspaceUpdated,
+  WorkspaceLayoutChanged,
   PauseChanged,
 }
 

@@ -16,7 +16,7 @@ use wm_common::{
   ClientResponseMessage, CommandData, EventSubscribeData,
   EventSubscriptionMessage, FocusedData, MonitorsData, QueryCommand,
   ServerMessage, SubscribableEvent, TilingDirectionData, WindowsData,
-  WmEvent, WorkspacesData, DEFAULT_IPC_PORT,
+  WmEvent, WorkspaceLayoutData, WorkspacesData, DEFAULT_IPC_PORT,
 };
 
 use crate::{
@@ -195,6 +195,11 @@ impl IpcServer {
               .into_iter()
               .map(|workspace| workspace.to_dto())
               .try_collect()?,
+          })
+        }
+        QueryCommand::WorkspaceLayout => {
+          ClientResponseData::WorkspaceLayout(WorkspaceLayoutData {
+            name: wm.state.active_workspace_layout.clone(),
           })
         }
         QueryCommand::Monitors => {
@@ -385,6 +390,9 @@ impl IpcServer {
       }
       WmEvent::WorkspaceUpdated { .. } => {
         SubscribableEvent::WorkspaceUpdated
+      }
+      WmEvent::WorkspaceLayoutChanged { .. } => {
+        SubscribableEvent::WorkspaceLayoutChanged
       }
       WmEvent::PauseChanged { .. } => SubscribableEvent::PauseChanged,
     };

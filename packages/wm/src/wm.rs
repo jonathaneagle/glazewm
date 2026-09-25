@@ -25,7 +25,8 @@ use crate::{
       platform_sync, reload_config, shell_exec, toggle_pause,
     },
     monitor::{
-      focus_monitor, restore_workspace_layout, save_workspace_layout,
+      focus_monitor, refresh_active_workspace_layout,
+      restore_workspace_layout, save_workspace_layout,
     },
     window::{
       ignore_window, move_window_in_direction, move_window_to_workspace,
@@ -70,6 +71,7 @@ impl WindowManager {
     let mut state =
       WmState::new(dispatcher, event_tx, exit_tx, saved_layouts);
     state.populate(config)?;
+    refresh_active_workspace_layout(&mut state);
 
     Ok(Self {
       event_rx,

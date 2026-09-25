@@ -60,6 +60,12 @@ pub enum WmEvent {
   WorkspaceUpdated {
     updated_workspace: ContainerDto,
   },
+  /// The saved workspace layout matching the connected displays changed.
+  ///
+  /// `name` is `None` when no saved layout matches.
+  WorkspaceLayoutChanged {
+    name: Option<String>,
+  },
   PauseChanged {
     is_paused: bool,
   },

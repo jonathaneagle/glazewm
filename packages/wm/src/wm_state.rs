@@ -40,6 +40,11 @@ pub struct WmState {
   /// Saved workspace layouts, keyed by user-chosen name.
   pub saved_layouts: SavedLayouts,
 
+  /// Name of the saved layout matching the connected displays, if any.
+  ///
+  /// Kept current by `refresh_active_workspace_layout`.
+  pub active_workspace_layout: Option<String>,
+
   /// Name of the most recently focused workspace.
   ///
   /// Used for the `general.toggle_workspace_on_refocus` option on
@@ -93,6 +98,7 @@ impl WmState {
       dispatcher,
       pending_sync: PendingSync::default(),
       saved_layouts,
+      active_workspace_layout: None,
       prev_effects_window: None,
       recent_workspace_name: None,
       unmanaged_or_minimized_timestamp: None,
