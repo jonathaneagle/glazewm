@@ -26,6 +26,7 @@ use crate::{
   saved_layouts::SavedLayouts,
   traits::{CommonGetters, PositionGetters, WindowGetters},
   user_config::UserConfig,
+  window_diagnostics,
 };
 
 pub struct WmState {
@@ -683,6 +684,10 @@ impl WmState {
 
     for window in invalid_windows {
       tracing::info!("Removing invalid window: {}", window);
+      window_diagnostics::record_unmanage(
+        &window,
+        "invalid window cleanup",
+      );
       unmanage_window(window, self)?;
     }
 
@@ -709,6 +714,15 @@ impl Drop for WmState {
       // Reset any effects on Windows.
       #[cfg(target_os = "windows")]
       {
+        // `show` has no effect on a cloaked window. One left cloaked here
+        // is never managed again, since cloaked windows are treated as
+        // hidden and so are skipped on the next launch.
+        if window.native().is_cloaked().unwrap_or(false) {
+          if let Err(err) = window.native().set_cloaked(false) {
+            warn!("Failed to uncloak window: {:?}", err);
+          }
+        }
+
         if let Err(err) = window.native().show() {
           warn!("Failed to show window: {:?}", err);
         }

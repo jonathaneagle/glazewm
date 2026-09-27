@@ -261,6 +261,13 @@ pub enum InvokeCommand {
     name: String,
   },
   WmExit,
+  /// Re-manages windows the WM has lost track of while they were hidden.
+  WmReattachWindows {
+    /// Workspace to add the windows to. Defaults to the first workspace
+    /// in the user config.
+    #[clap(long)]
+    workspace: Option<String>,
+  },
   WmRedraw,
   WmReloadConfig,
   WmRestoreWorkspaceLayout {

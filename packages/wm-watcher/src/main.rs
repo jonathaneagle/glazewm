@@ -41,6 +41,15 @@ async fn main() -> anyhow::Result<()> {
         managed_handles.into_iter().map(NativeWindow::from_handle);
 
       for window in managed_windows {
+        // `show` has no effect on a cloaked window. One left cloaked here
+        // is never managed again, since the WM treats cloaked windows as
+        // hidden and so skips them on its next launch.
+        if window.is_cloaked().unwrap_or(false) {
+          if let Err(err) = window.set_cloaked(false) {
+            tracing::warn!("Failed to uncloak window: {:?}", err);
+          }
+        }
+
         if let Err(err) = window.show() {
           tracing::warn!("Failed to show window: {:?}", err);
         }

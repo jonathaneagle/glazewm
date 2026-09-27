@@ -178,6 +178,16 @@ pub trait DispatcherExtWindows {
     directory: &Path,
     hide_window: bool,
   ) -> crate::Result<()>;
+
+  /// Gets all top-level windows that have `WS_VISIBLE` set but are
+  /// cloaked, and so are not returned by `visible_windows`.
+  ///
+  /// Includes windows on other virtual desktops, which the shell cloaks.
+  ///
+  /// # Platform-specific
+  ///
+  /// This method is only available on Windows.
+  fn cloaked_windows(&self) -> crate::Result<Vec<NativeWindow>>;
 }
 
 #[cfg(target_os = "windows")]
@@ -301,6 +311,10 @@ impl DispatcherExtWindows for Dispatcher {
 
     unsafe { ShellExecuteExW(&raw mut exec_info) }
       .map_err(crate::Error::from)
+  }
+
+  fn cloaked_windows(&self) -> crate::Result<Vec<NativeWindow>> {
+    platform_impl::cloaked_windows(self)
   }
 }
 

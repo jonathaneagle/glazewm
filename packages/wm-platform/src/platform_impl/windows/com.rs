@@ -7,7 +7,10 @@ use windows::{
       CoCreateInstance, CoInitializeEx, CoUninitialize, IServiceProvider,
       CLSCTX_ALL, CLSCTX_SERVER, COINIT_APARTMENTTHREADED,
     },
-    UI::Shell::{ITaskbarList2, TaskbarList},
+    UI::Shell::{
+      ITaskbarList2, IVirtualDesktopManager, TaskbarList,
+      VirtualDesktopManager,
+    },
   },
 };
 
@@ -29,6 +32,7 @@ pub(crate) struct ComInit {
   service_provider: Option<IServiceProvider>,
   application_view_collection: Option<IApplicationViewCollection>,
   taskbar_list: Option<ITaskbarList2>,
+  virtual_desktop_manager: Option<IVirtualDesktopManager>,
 }
 
 impl ComInit {
@@ -62,6 +66,7 @@ impl ComInit {
       service_provider,
       application_view_collection,
       taskbar_list,
+      virtual_desktop_manager: Self::create_virtual_desktop_manager(),
     }
   }
 
@@ -86,6 +91,24 @@ impl ComInit {
     })
   }
 
+  /// Returns an instance of `IVirtualDesktopManager`.
+  pub(crate) fn virtual_desktop_manager(
+    &self,
+  ) -> crate::Result<&IVirtualDesktopManager> {
+    self.virtual_desktop_manager.as_ref().ok_or_else(|| {
+      crate::Error::Platform(
+        "Unable to create `IVirtualDesktopManager` instance.".to_string(),
+      )
+    })
+  }
+
+  /// Creates the documented virtual desktop manager, or `None` if the
+  /// shell does not provide one.
+  fn create_virtual_desktop_manager() -> Option<IVirtualDesktopManager> {
+    unsafe { CoCreateInstance(&VirtualDesktopManager, None, CLSCTX_ALL) }
+      .ok()
+  }
+
   /// Refreshes cached COM interfaces.
   ///
   /// Called automatically by `with_retry` when COM operations fail due to
@@ -108,6 +131,9 @@ impl ComInit {
     // Re-create the taskbar list.
     self.taskbar_list =
       unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_SERVER) }.ok();
+
+    // Re-create the virtual desktop manager.
+    self.virtual_desktop_manager = Self::create_virtual_desktop_manager();
   }
 
   /// Executes a COM operation, refreshing interfaces on failure and
@@ -135,6 +161,7 @@ impl Default for ComInit {
 impl Drop for ComInit {
   fn drop(&mut self) {
     // Explicitly drop COM interfaces first.
+    drop(self.virtual_desktop_manager.take());
     drop(self.taskbar_list.take());
     drop(self.application_view_collection.take());
     drop(self.service_provider.take());

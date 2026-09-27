@@ -245,6 +245,26 @@ pub trait NativeWindowWindowsExt {
   /// This method is only available on Windows.
   fn set_cloaked(&self, cloaked: bool) -> crate::Result<()>;
 
+  /// Whether the window is cloaked, for any reason.
+  ///
+  /// A window can be cloaked by the WM (to hide it on an inactive
+  /// workspace), by the shell (e.g. when it is on another virtual
+  /// desktop), or by the app itself.
+  ///
+  /// # Platform-specific
+  ///
+  /// This method is only available on Windows.
+  fn is_cloaked(&self) -> crate::Result<bool>;
+
+  /// Whether the window belongs to the current virtual desktop.
+  ///
+  /// Windows pinned to all desktops count as on the current one.
+  ///
+  /// # Platform-specific
+  ///
+  /// This method is only available on Windows.
+  fn is_on_current_virtual_desktop(&self) -> crate::Result<bool>;
+
   /// Marks the window as fullscreen.
   ///
   /// Causes the native Windows taskbar to be moved to the bottom of the
@@ -382,6 +402,14 @@ impl NativeWindowWindowsExt for NativeWindow {
 
   fn set_cloaked(&self, cloaked: bool) -> crate::Result<()> {
     self.inner.set_cloaked(cloaked)
+  }
+
+  fn is_cloaked(&self) -> crate::Result<bool> {
+    self.inner.is_cloaked()
+  }
+
+  fn is_on_current_virtual_desktop(&self) -> crate::Result<bool> {
+    self.inner.is_on_current_virtual_desktop()
   }
 
   fn mark_fullscreen(&self, fullscreen: bool) -> crate::Result<()> {

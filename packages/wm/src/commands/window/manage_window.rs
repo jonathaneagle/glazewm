@@ -95,6 +95,20 @@ fn check_is_manageable(
     return Ok(None);
   }
 
+  manageable_properties(native_window)
+}
+
+/// Checks whether a window would be manageable if it were visible, and
+/// retrieves its native properties.
+///
+/// Lets a hidden or cloaked window be vetted before it is made visible,
+/// so that only windows the WM would manage are ever revealed.
+///
+/// Returns `Ok(Some(properties))` if the window passes every check other
+/// than visibility.
+pub fn manageable_properties(
+  native_window: &NativeWindow,
+) -> anyhow::Result<Option<NativeWindowProperties>> {
   #[cfg(target_os = "macos")]
   {
     use wm_platform::NativeWindowExtMacOs;

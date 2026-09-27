@@ -97,6 +97,25 @@ The arrangement inside each workspace (splits and tiling directions) moves with 
 
 - Automatic restore only happens when the set of connected displays changes. Swapping one display for another without changing the count doesn't trigger it. Run `wm-restore-workspace-layout` manually in that case.
 - Restoring by name applies whatever it can: monitors in the layout that aren't connected are skipped, so a named restore on a different setup can be partial.
+- A layout only moves workspaces that exist. Restarting GlazeWM files every visible window into whichever workspace is shown on its monitor, so other workspaces empty out and a restore has nothing to move for them.
+
+### Reattaching orphaned windows
+
+GlazeWM hides windows on inactive workspaces by *cloaking* them, and it treats a cloaked window as invisible. If it stops managing a window while that window is cloaked, the app keeps running but disappears from every workspace and the legend, and GlazeWM never picks it up again.
+
+```sh
+glazewm command wm-reattach-windows                  # Reattach orphans to the first configured workspace.
+glazewm command wm-reattach-windows --workspace 3    # ...or to a named workspace.
+```
+
+It uncloaks and re-manages every orphan on the **current virtual desktop**. It leaves alone windows on other virtual desktops (Windows cloaks those too), ignored windows, and windows GlazeWM wouldn't manage anyway. The original workspace of an orphan isn't known, so they all land in the one workspace.
+
+Two fixes in the fork cut down how often this happens:
+
+- **Shutdown uncloaks windows.** Previously, exiting or restarting GlazeWM, including recovery by `glazewm-watcher` after a crash, left every window on a hidden workspace cloaked, so the next launch skipped them.
+- **Diagnostics.** When a window is dropped by a hide event or by invalid-window cleanup (not by being closed), a record goes to `~/.glzr/glazewm/window-diagnostics.log`, with its display state, cloak state and virtual desktop. If an orphan appears, that log shows which code path lost it.
+
+Switching virtual desktops is a suspected remaining cause and is still open.
 
 ### Companion: workspace legend (Zebar widget)
 

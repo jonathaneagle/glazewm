@@ -771,6 +771,22 @@ impl WindowManager {
         enable_binding_mode(name, state, config)
       }
       InvokeCommand::WmExit => state.emit_exit(),
+      InvokeCommand::WmReattachWindows { workspace } => {
+        #[cfg(target_os = "windows")]
+        {
+          crate::commands::window::reattach_windows(
+            workspace.as_deref(),
+            state,
+            config,
+          )
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+          let _ = workspace;
+          bail!("`wm-reattach-windows` is only supported on Windows.")
+        }
+      }
       InvokeCommand::WmRedraw => {
         state
           .pending_sync

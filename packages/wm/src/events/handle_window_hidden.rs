@@ -4,7 +4,7 @@ use wm_platform::NativeWindow;
 
 use crate::{
   commands::window::unmanage_window, traits::WindowGetters,
-  user_config::UserConfig, wm_state::WmState,
+  user_config::UserConfig, window_diagnostics, wm_state::WmState,
 };
 
 pub fn handle_window_hidden(
@@ -32,6 +32,7 @@ pub fn handle_window_hidden(
       || window.display_state() == DisplayState::Shown)
       && !window.native().is_visible().unwrap_or(false)
     {
+      window_diagnostics::record_unmanage(&window, "window hidden event");
       unmanage_window(window, state)?;
     }
   }

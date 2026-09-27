@@ -715,11 +715,30 @@ impl NativeWindow {
     self.set_transparency(&OpacityValue::from_alpha(target_alpha))
   }
 
-  /// Whether the window is cloaked. For some UWP apps, `WS_VISIBLE` will
-  /// be present even if the window isn't actually visible. The
-  /// `DWMWA_CLOAKED` attribute is used to check whether these apps are
-  /// visible.
-  fn is_cloaked(&self) -> crate::Result<bool> {
+  /// Implements [`NativeWindowWindowsExt::is_on_current_virtual_desktop`].
+  pub(crate) fn is_on_current_virtual_desktop(
+    &self,
+  ) -> crate::Result<bool> {
+    COM_INIT.with(|com_init| -> crate::Result<bool> {
+      com_init.borrow_mut().with_retry(|com| {
+        let manager = com.virtual_desktop_manager()?;
+
+        // SAFETY: `manager` is a live COM interface owned by `COM_INIT`,
+        // and the handle is only read. An invalid handle yields an error
+        // `HRESULT` rather than undefined behavior.
+        unsafe { manager.IsWindowOnCurrentVirtualDesktop(self.hwnd()) }
+          .map(BOOL::as_bool)
+          .map_err(crate::Error::from)
+      })
+    })
+  }
+
+  /// Implements [`NativeWindowWindowsExt::is_cloaked`].
+  ///
+  /// For some UWP apps, `WS_VISIBLE` will be present even if the window
+  /// isn't actually visible. The `DWMWA_CLOAKED` attribute is used to
+  /// check whether these apps are visible.
+  pub(crate) fn is_cloaked(&self) -> crate::Result<bool> {
     let mut cloaked = 0u32;
 
     unsafe {
@@ -750,14 +769,12 @@ impl From<NativeWindow> for crate::NativeWindow {
   }
 }
 
-/// Implements [`Dispatcher::visible_windows`].
-pub(crate) fn visible_windows(
-  _: &Dispatcher,
-) -> crate::Result<Vec<crate::NativeWindow>> {
+/// Gets every top-level window, in z-order (top to bottom).
+fn top_level_windows() -> crate::Result<Vec<NativeWindow>> {
   let mut handles: Vec<isize> = Vec::new();
 
   #[allow(clippy::items_after_statements)]
-  extern "system" fn visible_windows_proc(
+  extern "system" fn top_level_windows_proc(
     handle: HWND,
     data: LPARAM,
   ) -> BOOL {
@@ -768,16 +785,42 @@ pub(crate) fn visible_windows(
 
   unsafe {
     EnumWindows(
-      Some(visible_windows_proc),
+      Some(top_level_windows_proc),
       LPARAM(std::ptr::from_mut(&mut handles) as _),
     )
   }?;
 
+  Ok(handles.into_iter().map(NativeWindow::new).collect())
+}
+
+/// Implements [`Dispatcher::visible_windows`].
+pub(crate) fn visible_windows(
+  _: &Dispatcher,
+) -> crate::Result<Vec<crate::NativeWindow>> {
   Ok(
-    handles
+    top_level_windows()?
       .into_iter()
-      .map(NativeWindow::new)
       .filter(|window| window.is_visible().unwrap_or(false))
+      .map(Into::into)
+      .collect(),
+  )
+}
+
+/// Implements [`DispatcherExtWindows::cloaked_windows`].
+pub(crate) fn cloaked_windows(
+  _: &Dispatcher,
+) -> crate::Result<Vec<crate::NativeWindow>> {
+  Ok(
+    top_level_windows()?
+      .into_iter()
+      .filter(|window| {
+        // SAFETY: `IsWindowVisible` only reads the window's style, and
+        // returns false for a handle that has since been destroyed.
+        let has_visible_style =
+          unsafe { IsWindowVisible(window.hwnd()) }.as_bool();
+
+        has_visible_style && window.is_cloaked().unwrap_or(false)
+      })
       .map(Into::into)
       .collect(),
   )

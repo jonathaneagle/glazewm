@@ -17,8 +17,9 @@ use anyhow::{Context, Error};
 use tokio::{process::Command, signal};
 use tracing::Level;
 use tracing_subscriber::{
+  filter::Targets,
   fmt::{self, writer::MakeWriterExt},
-  layer::SubscriberExt,
+  layer::{Layer, SubscriberExt},
 };
 use wm_common::{AppCommand, InvokeCommand, Verbosity, WmEvent};
 #[cfg(target_os = "macos")]
@@ -43,6 +44,7 @@ mod saved_layouts;
 mod sys_tray;
 mod traits;
 mod user_config;
+mod window_diagnostics;
 mod wm;
 mod wm_state;
 
@@ -307,14 +309,21 @@ async fn start_wm(
 
 /// Initialize logging with the specified verbosity level.
 ///
-/// Error logs are saved to `~/.glzr/glazewm/errors.log`.
+/// Error logs are saved to `~/.glzr/glazewm/errors.log`, and window
+/// diagnostics (see `window_diagnostics`) to
+/// `~/.glzr/glazewm/window-diagnostics.log`.
 fn setup_logging(verbosity: &Verbosity) -> anyhow::Result<()> {
   let error_log_dir = home::home_dir()
     .context("Unable to get home directory.")?
     .join(".glzr/glazewm/");
 
   let error_writer =
-    tracing_appender::rolling::never(error_log_dir, "errors.log");
+    tracing_appender::rolling::never(&error_log_dir, "errors.log");
+
+  let diagnostics_writer = tracing_appender::rolling::never(
+    &error_log_dir,
+    "window-diagnostics.log",
+  );
 
   let subscriber = tracing_subscriber::registry()
     .with(
@@ -326,6 +335,17 @@ fn setup_logging(verbosity: &Verbosity) -> anyhow::Result<()> {
       // Output to error log file.
       fmt::Layer::new()
         .with_writer(error_writer.with_max_level(Level::ERROR)),
+    )
+    .with(
+      // Output window diagnostics to their own file, whatever the
+      // verbosity, so that dropped windows can be traced after the fact.
+      fmt::Layer::new()
+        .with_ansi(false)
+        .with_writer(diagnostics_writer)
+        .with_filter(
+          Targets::new()
+            .with_target(window_diagnostics::TARGET, Level::INFO),
+        ),
     );
 
   tracing::subscriber::set_global_default(subscriber)?;
