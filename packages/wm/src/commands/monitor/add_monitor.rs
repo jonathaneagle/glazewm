@@ -38,6 +38,13 @@ pub fn add_monitor(
   Ok(monitor)
 }
 
+/// Moves workspaces bound to a newly added monitor onto it, and activates
+/// its `keep_alive` workspaces.
+///
+/// Does not guarantee the monitor ends up with a workspace. Callers must
+/// follow up with `ensure_monitor_has_workspace` once every other step
+/// that can place workspaces (e.g. restoring a saved layout) has run, so
+/// that a spare workspace is only used when one is still needed.
 pub fn move_bounded_workspaces_to_new_monitor(
   monitor: &Monitor,
   state: &mut WmState,
@@ -75,13 +82,6 @@ pub fn move_bounded_workspaces_to_new_monitor(
         config,
       )?;
     }
-  }
-
-  // Make sure the monitor has at least one workspace. This will
-  // automatically prioritize bound workspace configs and fall back to the
-  // first available one if needed.
-  if monitor.child_count() == 0 {
-    activate_workspace(None, Some(monitor.clone()), state, config)?;
   }
 
   Ok(())

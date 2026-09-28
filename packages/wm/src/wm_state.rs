@@ -15,7 +15,10 @@ use crate::{
   commands::{
     container::set_focused_descendant,
     general::platform_sync,
-    monitor::{add_monitor, move_bounded_workspaces_to_new_monitor},
+    monitor::{
+      add_monitor, ensure_monitor_has_workspace,
+      move_bounded_workspaces_to_new_monitor,
+    },
     window::{manage_window, unmanage_window},
   },
   models::{
@@ -131,6 +134,7 @@ impl WmState {
         let monitor =
           add_monitor(native_display, native_properties, self)?;
         move_bounded_workspaces_to_new_monitor(&monitor, self, config)?;
+        ensure_monitor_has_workspace(&monitor, self, config)?;
       }
     }
 

@@ -3,7 +3,8 @@ use wm_common::try_warn;
 
 use crate::{
   commands::monitor::{
-    add_monitor, apply_layout, move_bounded_workspaces_to_new_monitor,
+    add_monitor, apply_layout, ensure_monitor_has_workspace,
+    move_bounded_workspaces_to_new_monitor,
     refresh_active_workspace_layout, remove_monitor, sort_monitors,
     update_monitor,
   },
@@ -112,6 +113,18 @@ pub fn handle_display_settings_changed(
           tracing::error!("Failed to restore workspace layout: {}", err);
         }
       }
+    }
+  }
+
+  // Only now give monitors that are still empty a workspace. A restored
+  // layout usually fills new monitors itself, and filling them first
+  // could use up the last spare workspace before the layout is applied.
+  // A failure is logged rather than returned, so the rest of the display
+  // change (DPI adjustment and redraw) still happens.
+  for monitor in state.monitors() {
+    if let Err(err) = ensure_monitor_has_workspace(&monitor, state, config)
+    {
+      tracing::error!("{:?}", err);
     }
   }
 

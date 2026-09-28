@@ -4,7 +4,7 @@ use wm_common::WmEvent;
 use crate::{
   commands::{
     container::move_container_within_tree,
-    workspace::{activate_workspace, sort_workspaces},
+    monitor::ensure_monitor_has_workspace, workspace::sort_workspaces,
   },
   models::{Monitor, Workspace},
   traits::{CommonGetters, PositionGetters, WindowGetters},
@@ -14,9 +14,9 @@ use crate::{
 
 /// Moves a workspace to the given monitor.
 ///
-/// Activates a replacement workspace if the origin monitor would be left
-/// with none, and re-sorts the target monitor's workspaces by config
-/// order.
+/// Gives the origin monitor a replacement workspace if it would be left
+/// with none (see `ensure_monitor_has_workspace`), and re-sorts the target
+/// monitor's workspaces by config order.
 pub fn move_workspace_to_monitor(
   workspace: &Workspace,
   target_monitor: &Monitor,
@@ -59,7 +59,7 @@ pub fn move_workspace_to_monitor(
   match origin_monitor.child_count() {
     0 => {
       // Prevent origin monitor from having no workspaces.
-      activate_workspace(None, Some(origin_monitor), state, config)?;
+      ensure_monitor_has_workspace(&origin_monitor, state, config)?;
     }
     _ => {
       // Redraw the workspace on the origin monitor.

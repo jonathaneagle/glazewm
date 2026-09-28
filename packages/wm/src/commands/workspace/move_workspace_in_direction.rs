@@ -2,9 +2,12 @@ use anyhow::Context;
 use wm_common::WmEvent;
 use wm_platform::Direction;
 
-use super::{activate_workspace, deactivate_workspace, sort_workspaces};
+use super::{deactivate_workspace, sort_workspaces};
 use crate::{
-  commands::container::move_container_within_tree,
+  commands::{
+    container::move_container_within_tree,
+    monitor::ensure_monitor_has_workspace,
+  },
   models::Workspace,
   traits::{CommonGetters, PositionGetters, WindowGetters},
   user_config::UserConfig,
@@ -57,7 +60,7 @@ pub fn move_workspace_in_direction(
     match origin_monitor.child_count() {
       0 => {
         // Prevent origin monitor from having no workspaces.
-        activate_workspace(None, Some(origin_monitor), state, config)?;
+        ensure_monitor_has_workspace(&origin_monitor, state, config)?;
       }
       _ => {
         // Redraw the workspace on the origin monitor.

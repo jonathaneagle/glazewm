@@ -1,4 +1,5 @@
 mod add_monitor;
+mod ensure_monitor_has_workspace;
 mod focus_monitor;
 mod move_workspace_to_monitor;
 mod refresh_active_workspace_layout;
@@ -9,6 +10,7 @@ mod sort_monitors;
 mod update_monitor;
 
 pub use add_monitor::*;
+pub use ensure_monitor_has_workspace::*;
 pub use focus_monitor::*;
 pub use move_workspace_to_monitor::*;
 pub use refresh_active_workspace_layout::*;
