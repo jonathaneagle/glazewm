@@ -74,6 +74,10 @@ pub fn workspaces_to_move(
 
 /// Applies a saved layout to the current monitors.
 ///
+/// Also queues a taskbar resync, even when no workspace moves, since a
+/// restore is typically run to recover from a disrupted session (e.g.
+/// after login or a dock change) where taskbar entries may be stale.
+///
 /// Returns the number of workspaces moved.
 ///
 /// # Errors
@@ -99,6 +103,8 @@ pub fn apply_layout(
         )
       })?;
   }
+
+  state.pending_sync.queue_taskbar_sync();
 
   Ok(count)
 }
@@ -186,11 +192,19 @@ mod tests {
   // Windows-only: `SavedMonitor`'s `hardware_id` field and
   // `Monitor::mock()`'s `hardware_id` builder param are Windows-only.
   #[cfg(target_os = "windows")]
-  use super::workspaces_to_move;
+  use tokio::sync::mpsc;
+  #[cfg(target_os = "windows")]
+  use wm_platform::Dispatcher;
+
+  #[cfg(target_os = "windows")]
+  use super::{apply_layout, workspaces_to_move};
   #[cfg(target_os = "windows")]
   use crate::{
+    commands::container::attach_container,
     models::{Monitor, Workspace},
-    saved_layouts::{SavedLayout, SavedMonitor},
+    saved_layouts::{SavedLayout, SavedLayouts, SavedMonitor},
+    user_config::UserConfig,
+    wm_state::WmState,
   };
 
   /// Builds a saved monitor entry.
@@ -246,6 +260,48 @@ mod tests {
     };
 
     assert!(workspaces_to_move(&layout, &live).is_empty());
+  }
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn queues_taskbar_sync_even_when_nothing_moves() {
+    let dir = std::env::temp_dir()
+      .join(format!("glazewm-restore-{}", uuid::Uuid::new_v4()));
+    let store = SavedLayouts::load(dir.join("layouts.yaml"));
+    let config = UserConfig::new(Some(dir.join("config.yaml")))
+      .expect("Failed to create sample config.");
+
+    let (event_tx, _) = mpsc::unbounded_channel();
+    let (exit_tx, _) = mpsc::unbounded_channel();
+    let mut state =
+      WmState::new(Dispatcher::mock(), event_tx, exit_tx, store);
+
+    let monitor = Monitor::mock()
+      .hardware_id("LEFT".to_string())
+      .workspaces(vec![Workspace::mock().name("1".to_string()).call()])
+      .call();
+
+    attach_container(
+      &monitor.into(),
+      &state.root_container.clone().into(),
+      None,
+    )
+    .expect("Failed to attach mock monitor.");
+
+    // The layout is already in effect, so no workspace moves. Taskbar
+    // entries can still be stale, so they must be resynced regardless.
+    let layout = SavedLayout {
+      saved_at: None,
+      monitors: vec![saved("LEFT", &["1"])],
+    };
+
+    let moved = apply_layout(&layout, &mut state, &config)
+      .expect("Failed to apply layout.");
+
+    assert_eq!(moved, 0);
+    assert!(state.pending_sync.needs_taskbar_sync());
+
+    let _ = std::fs::remove_dir_all(dir);
   }
 
   #[cfg(target_os = "windows")]

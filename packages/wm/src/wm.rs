@@ -40,7 +40,8 @@ use crate::{
   },
   events::{
     handle_display_settings_changed, handle_mouse_move,
-    handle_window_destroyed, handle_window_focused, handle_window_hidden,
+    handle_taskbar_created, handle_window_destroyed,
+    handle_window_focused, handle_window_hidden,
     handle_window_minimize_ended, handle_window_minimized,
     handle_window_moved_or_resized, handle_window_shown,
     handle_window_title_changed,
@@ -112,6 +113,10 @@ impl WindowManager {
       }
       PlatformEvent::Mouse(event) => {
         handle_mouse_move(&event, state, config)
+      }
+      PlatformEvent::TaskbarCreated => {
+        handle_taskbar_created(state);
+        Ok(())
       }
       PlatformEvent::Window(window_event) => match window_event {
         WindowEvent::Focused { window, .. } => {

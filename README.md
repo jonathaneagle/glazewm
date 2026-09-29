@@ -117,6 +117,17 @@ Two fixes in the fork cut down how often this happens:
 
 Switching virtual desktops is a suspected remaining cause and is still open.
 
+### Taskbar resync
+
+With `hide_method: 'cloak'` and `show_all_in_taskbar: false`, GlazeWM removes the taskbar entry of every window on a hidden workspace and adds it back when the workspace is shown. Upstream only does this as a window is shown or hidden, so an entry that gets dropped (e.g. GlazeWM starting before Explorer's taskbar at login) stays missing: the app appears in the legend but not the taskbar. Restarting `explorer.exe` brings it back, but also brings back entries for every hidden workspace.
+
+The fork resyncs every window's taskbar entry with its display state:
+
+- **On every layout restore**, manual or automatic, even when no workspace moves. Run `wm-restore-workspace-layout` to recover missing entries.
+- **Whenever Explorer creates its taskbar**, at login or after an Explorer restart, so entries for hidden workspaces are removed again.
+
+Adding and removing entries is idempotent, so a resync is safe to repeat.
+
 ### Companion: workspace legend (Zebar widget)
 
 A Zebar widget pack, `workspace-legend`, pairs with this fork. It isn't part of this repository: it lives in `~/.glzr/zebar/workspace-legend/` and is enabled in Zebar's `startupConfigs`. Press `alt+0` (the `legend` binding mode in `config.yaml`) to show a 3×3 overview of workspaces 1–9, then press `1`–`9` to jump, or `Esc` or a click outside the card to close.

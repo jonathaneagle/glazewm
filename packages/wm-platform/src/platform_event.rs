@@ -10,6 +10,14 @@ pub enum PlatformEvent {
   Keybinding(KeybindingEvent),
   Mouse(MouseEvent),
   DisplaySettingsChanged,
+
+  /// Native taskbar was created.
+  ///
+  /// # Platform-specific
+  ///
+  /// - **Windows**: Emitted at login and whenever Explorer restarts.
+  /// - **macOS**: Never emitted.
+  TaskbarCreated,
 }
 
 #[derive(Clone, Debug)]

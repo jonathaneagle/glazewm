@@ -30,6 +30,11 @@ pub struct PendingSync {
   /// Whether to jump the cursor to the focused container (if enabled in
   /// user config).
   needs_cursor_jump: bool,
+
+  /// Whether taskbar entries for all windows should be resynced with
+  /// their display state, instead of only for windows being shown or
+  /// hidden.
+  needs_taskbar_sync: bool,
 }
 
 impl PendingSync {
@@ -40,6 +45,7 @@ impl PendingSync {
       || self.needs_focused_effect_update
       || self.needs_all_effects_update
       || self.needs_cursor_jump
+      || self.needs_taskbar_sync
   }
 
   pub fn clear(&mut self) -> &mut Self {
@@ -49,6 +55,7 @@ impl PendingSync {
     self.needs_focused_effect_update = false;
     self.needs_all_effects_update = false;
     self.needs_cursor_jump = false;
+    self.needs_taskbar_sync = false;
     self
   }
 
@@ -116,6 +123,11 @@ impl PendingSync {
     self
   }
 
+  pub fn queue_taskbar_sync(&mut self) -> &mut Self {
+    self.needs_taskbar_sync = true;
+    self
+  }
+
   pub fn needs_focus_update(&self) -> bool {
     self.needs_focus_update
   }
@@ -132,11 +144,37 @@ impl PendingSync {
     self.needs_cursor_jump
   }
 
+  pub fn needs_taskbar_sync(&self) -> bool {
+    self.needs_taskbar_sync
+  }
+
   pub fn containers_to_redraw(&self) -> &HashMap<Uuid, Container> {
     &self.containers_to_redraw
   }
 
   pub fn workspaces_to_reorder(&self) -> &Vec<Workspace> {
     &self.workspaces_to_reorder
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::PendingSync;
+
+  #[test]
+  fn taskbar_sync_counts_as_a_change_until_cleared() {
+    let mut pending_sync = PendingSync::default();
+    pending_sync.queue_taskbar_sync();
+
+    assert!(pending_sync.needs_taskbar_sync());
+    assert!(
+      pending_sync.has_changes(),
+      "A queued taskbar sync alone must trigger a platform sync."
+    );
+
+    pending_sync.clear();
+
+    assert!(!pending_sync.needs_taskbar_sync());
+    assert!(!pending_sync.has_changes());
   }
 }

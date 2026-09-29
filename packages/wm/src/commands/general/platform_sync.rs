@@ -1,10 +1,10 @@
 use anyhow::Context;
-#[cfg(target_os = "windows")]
-use wm_common::WindowEffectConfig;
 use wm_common::{
   CursorJumpTrigger, DisplayState, HideCorner, HideMethod, UniqueExt,
   WindowState, WmEvent,
 };
+#[cfg(target_os = "windows")]
+use wm_common::{GeneralConfig, WindowEffectConfig};
 #[cfg(target_os = "windows")]
 use wm_platform::NativeWindowWindowsExt;
 #[cfg(target_os = "windows")]
@@ -33,6 +33,12 @@ pub fn platform_sync(
     || !state.pending_sync.workspaces_to_reorder().is_empty()
   {
     redraw_containers(&focused_container, state, config)?;
+  }
+
+  // Resync after redrawing, so that display states are final.
+  #[cfg(target_os = "windows")]
+  if state.pending_sync.needs_taskbar_sync() {
+    sync_taskbar(state, config);
   }
 
   if state.pending_sync.needs_cursor_jump()
@@ -318,8 +324,7 @@ fn redraw_containers(
     // taskbar, we only need to set visibility if `show_all_in_taskbar` is
     // `false`.
     #[cfg(target_os = "windows")]
-    if config.value.general.hide_method == HideMethod::Cloak
-      && !config.value.general.show_all_in_taskbar
+    if manages_taskbar_visibility(&config.value.general)
       && matches!(
         window.display_state(),
         DisplayState::Showing | DisplayState::Hiding
@@ -333,6 +338,49 @@ fn redraw_containers(
   }
 
   Ok(())
+}
+
+/// Whether the WM must add and remove taskbar entries itself.
+///
+/// Cloaked windows keep their taskbar entry unless it is explicitly
+/// removed, so entries only need managing when windows are cloaked and
+/// `show_all_in_taskbar` is disabled.
+#[cfg(target_os = "windows")]
+fn manages_taskbar_visibility(general: &GeneralConfig) -> bool {
+  general.hide_method == HideMethod::Cloak && !general.show_all_in_taskbar
+}
+
+/// Resyncs the taskbar entry of every window with its display state.
+///
+/// Entries are otherwise only updated as a window is shown or hidden, so
+/// an entry that was dropped (e.g. because Explorer was not yet running at
+/// login) stays missing until the window is next hidden and shown again.
+/// Adding and removing entries is idempotent, so this is safe to repeat.
+#[cfg(target_os = "windows")]
+fn sync_taskbar(state: &WmState, config: &UserConfig) {
+  if !manages_taskbar_visibility(&config.value.general) {
+    return;
+  }
+
+  let windows = state.windows();
+  tracing::info!(
+    "Resyncing taskbar entries for {} window(s).",
+    windows.len()
+  );
+
+  for window in windows {
+    let is_visible = matches!(
+      window.display_state(),
+      DisplayState::Showing | DisplayState::Shown
+    );
+
+    if let Err(err) = window.native().set_taskbar_visibility(is_visible) {
+      tracing::warn!(
+        "Failed to set taskbar visibility for {window}: {}",
+        err
+      );
+    }
+  }
 }
 
 fn reposition_window(
@@ -616,4 +664,41 @@ fn apply_transparency_effect(
   };
 
   _ = window.native().set_transparency(transparency);
+}
+
+#[cfg(test)]
+mod tests {
+  #[cfg(target_os = "windows")]
+  use wm_common::{GeneralConfig, HideMethod};
+
+  #[cfg(target_os = "windows")]
+  use super::manages_taskbar_visibility;
+
+  #[cfg(target_os = "windows")]
+  #[test]
+  fn manages_taskbar_only_for_cloaked_windows_hidden_from_taskbar() {
+    let config = |hide_method, show_all_in_taskbar| GeneralConfig {
+      hide_method,
+      show_all_in_taskbar,
+      ..GeneralConfig::default()
+    };
+
+    assert!(manages_taskbar_visibility(&config(
+      HideMethod::Cloak,
+      false
+    )));
+
+    // Cloaked windows keep their taskbar entry by default, so there is
+    // nothing to manage when every window should be shown.
+    assert!(!manages_taskbar_visibility(&config(
+      HideMethod::Cloak,
+      true
+    )));
+
+    // Windows hidden via `ShowWindow` lose their entry natively.
+    assert!(!manages_taskbar_visibility(&config(
+      HideMethod::Hide,
+      false
+    )));
+  }
 }

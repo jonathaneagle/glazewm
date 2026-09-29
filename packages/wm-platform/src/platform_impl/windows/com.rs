@@ -59,13 +59,10 @@ impl ComInit {
       },
     );
 
-    let taskbar_list =
-      unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_SERVER) }.ok();
-
     Self {
       service_provider,
       application_view_collection,
-      taskbar_list,
+      taskbar_list: Self::create_taskbar_list(),
       virtual_desktop_manager: Self::create_virtual_desktop_manager(),
     }
   }
@@ -102,6 +99,20 @@ impl ComInit {
     })
   }
 
+  /// Creates an initialized taskbar list, or `None` if the taskbar is
+  /// unavailable (e.g. Explorer is not running).
+  fn create_taskbar_list() -> Option<ITaskbarList2> {
+    let taskbar_list: ITaskbarList2 =
+      unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_SERVER) }
+        .ok()?;
+
+    // SAFETY: `HrInit` must be called once before any other
+    // `ITaskbarList` method, and the instance was just created.
+    unsafe { taskbar_list.HrInit() }.ok()?;
+
+    Some(taskbar_list)
+  }
+
   /// Creates the documented virtual desktop manager, or `None` if the
   /// shell does not provide one.
   fn create_virtual_desktop_manager() -> Option<IVirtualDesktopManager> {
@@ -129,8 +140,7 @@ impl ComInit {
       });
 
     // Re-create the taskbar list.
-    self.taskbar_list =
-      unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_SERVER) }.ok();
+    self.taskbar_list = Self::create_taskbar_list();
 
     // Re-create the virtual desktop manager.
     self.virtual_desktop_manager = Self::create_virtual_desktop_manager();
