@@ -2,7 +2,7 @@
 
 Date: 2026-10-01
 Status: approved in conversation, spec awaiting review
-Branch: `feat/workspace-banks` (from `main`)
+Branch: `feat/workspace-banks` (from `fork`, the personal integration branch; not intended for upstream)
 
 ## Problem
 
@@ -40,8 +40,7 @@ GlazeWM's binding modes can almost express this, but two things block it:
 ## Non-goals
 
 - **A first-class "bank" concept in the WM.** Banks are just config built on
-  generic features: inheriting modes, and modes linked to workspaces. That keeps the WM change small and
-  upstreamable.
+  generic features: inheriting modes, and modes linked to workspaces. That keeps the WM change small and general.
 - **Monocle (one-window-at-a-time) layout.** Agreed as the follow-up, with
   its own spec.
 - **More than two banks.** The mechanism allows it (`bank-c` etc.), but only

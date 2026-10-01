@@ -27,7 +27,7 @@
   Claude-Session: https://claude.ai/code/session_016cvcam1fPfdvhGDyedMvRm
   ```
 - Never run `cargo` in the background (it deadlocks on the build-dir lock).
-- Branch `feat/workspace-banks` (from `main`). Do not push; the user pushes manually.
+- Branch `feat/workspace-banks`, based on the long-lived `fork` integration branch (which already contains the workspace layout profiles work). When the plan is complete, merge into `fork`. Do not push; the user pushes manually.
 - Bank B workspace names are exactly `B1`–`B9`. The `.` key is `oem_period` (`wm-platform/src/models/key.rs:415`).
 
 ## Review Focus
@@ -380,7 +380,7 @@ Expected: 7 passed.
 
 - [ ] **Step 6: Document `inherit` in the sample config**
 
-In `resources/assets/sample-config.yaml`, directly above `binding_modes:` (currently `binding_modes:` at line 161), insert:
+In `resources/assets/sample-config.yaml`, directly above the top-level `binding_modes:` key, insert:
 
 ```yaml
 # Binding modes swap in a different set of keybindings while enabled.
@@ -966,6 +966,7 @@ mod tests {
       general::{disable_binding_mode, enable_binding_mode},
     },
     models::{Monitor, Workspace},
+    saved_layouts::SavedLayouts,
     user_config::UserConfig,
     wm_state::WmState,
   };
@@ -988,9 +989,16 @@ workspaces:
   /// Creates a `WmState` with one monitor holding workspaces `1`, `B1`
   /// and `B2`.
   fn mock_state() -> WmState {
+    // A path that doesn't exist yields an empty layout store.
+    let store = SavedLayouts::load(
+      std::env::temp_dir()
+        .join(format!("glazewm-banks-{}", uuid::Uuid::new_v4()))
+        .join("layouts.yaml"),
+    );
+
     let (event_tx, _) = mpsc::unbounded_channel();
     let (exit_tx, _) = mpsc::unbounded_channel();
-    let state = WmState::new(Dispatcher::mock(), event_tx, exit_tx);
+    let state = WmState::new(Dispatcher::mock(), event_tx, exit_tx, store);
 
     let monitor = Monitor::mock()
       .workspaces(vec![
@@ -1306,26 +1314,14 @@ git commit -m "feat: sync workspace-linked binding modes with focus"
 
 - [ ] **Step 1: Write the failing CLI tests**
 
-Append to `packages/wm-common/src/app_command.rs`:
+`packages/wm-common/src/app_command.rs` already ends with a `#[cfg(test)] mod tests` that has a `parse(input: &str) -> InvokeCommand` helper (it panics on parse failure). Add these tests **inside that existing module**. Do not create a second `mod tests`.
 
 ```rs
-#[cfg(test)]
-mod tests {
-  use clap::Parser;
-
-  use super::InvokeCommand;
-
   #[test]
   fn parses_recent_workspace_with_mode() {
-    let command = InvokeCommand::try_parse_from([
-      "",
-      "focus",
-      "--recent-workspace-with-mode",
-      "bank-b",
-    ])
-    .expect("Failed to parse command.");
-
-    let InvokeCommand::Focus(args) = command else {
+    let InvokeCommand::Focus(args) =
+      parse("focus --recent-workspace-with-mode bank-b")
+    else {
       panic!("Expected a focus command.");
     };
 
@@ -1334,14 +1330,9 @@ mod tests {
 
   #[test]
   fn parses_recent_workspace_without_mode() {
-    let command = InvokeCommand::try_parse_from([
-      "",
-      "focus",
-      "--recent-workspace-without-mode",
-    ])
-    .expect("Failed to parse command.");
-
-    let InvokeCommand::Focus(args) = command else {
+    let InvokeCommand::Focus(args) =
+      parse("focus --recent-workspace-without-mode")
+    else {
       panic!("Expected a focus command.");
     };
 
@@ -1350,16 +1341,13 @@ mod tests {
 
   #[test]
   fn rejects_combined_focus_targets() {
-    let result = InvokeCommand::try_parse_from([
-      "",
-      "focus",
-      "--recent-workspace-without-mode",
-      "--recent-workspace",
-    ]);
+    let args = std::iter::once("").chain(
+      "focus --recent-workspace-without-mode --recent-workspace"
+        .split_whitespace(),
+    );
 
-    assert!(result.is_err());
+    assert!(InvokeCommand::try_parse_from(args).is_err());
   }
-}
 ```
 
 - [ ] **Step 2: Write the failing config tests**
